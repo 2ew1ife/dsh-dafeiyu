@@ -7,12 +7,16 @@ import {
   cacheWslBundledHelper,
   defaultCmdExe,
   defaultWindowsLocalAppData,
+  linuxArm64BundledHelperPath,
+  linuxBundledHelperPath,
   resolveHelperEnvironment,
   resolveHelperLaunch,
+  shouldUseBundledHelper,
 } from '../src/helper-process.js'
 
 const bundledPath = '/package/runtime/bin/win32-x64/dsh-dafeiyu-helper.exe'
 const linuxBundledPath = '/package/runtime/bin/linux-x64/dsh-dafeiyu-helper'
+const linuxArm64BundledPath = '/package/runtime/bin/linux-arm64/dsh-dafeiyu-helper'
 const darwinBundledPath = '/package/runtime/bin/darwin/dsh-dafeiyu-helper.app/Contents/MacOS/dsh-dafeiyu-helper'
 const helperPath = '/package/runtime/helper.py'
 
@@ -29,9 +33,11 @@ test('native helpers open Desktop without inheriting Electron Node mode', () => 
 function resolve(overrides = {}) {
   return resolveHelperLaunch({
     platform: 'linux',
+    arch: 'x64',
     isWslEnv: false,
     bundledPath,
     linuxBundledPath,
+    linuxArm64BundledPath,
     darwinBundledPath,
     helperPath,
     fileExists: () => true,
@@ -245,8 +251,44 @@ test('ordinary Linux launches the bundled Linux helper', () => {
 
 test('ordinary Linux falls back to Python when its bundled helper is absent', () => {
   assert.deepEqual(resolve({
-    fileExists: (path) => path !== linuxBundledPath,
+    fileExists: (path) => !path.startsWith('/package/runtime/bin/'),
   }), { command: 'python3', args: [helperPath] })
+})
+
+test('Linux arm64 launches its own bundled helper, never the x64 binary', () => {
+  assert.notEqual(linuxArm64BundledHelperPath, linuxBundledHelperPath)
+  assert.deepEqual(resolve({ arch: 'arm64' }), { command: linuxArm64BundledPath, args: [] })
+})
+
+test('Linux arm64 without a bundled Helper falls back to Python and explains why', () => {
+  const launch = resolve({
+    arch: 'arm64',
+    fileExists: (path) => path !== linuxArm64BundledPath,
+  })
+  // The x64 Helper is present in the package but cannot execute on aarch64:
+  // running it through /bin/sh only yields "Syntax error" (issue #91).
+  assert.equal(launch.command, 'python3')
+  assert.deepEqual(launch.args, [helperPath])
+  assert.match(launch.notice, /linux\/arm64/)
+  assert.match(launch.notice, /PySide6/)
+})
+
+test('Linux arm64 in a source checkout without any Helper stays quiet', () => {
+  const launch = resolve({ arch: 'arm64', fileExists: () => false })
+  assert.deepEqual(launch, { command: 'python3', args: [helperPath] })
+})
+
+test('shouldUseBundledHelper follows the host architecture', () => {
+  const onlyX64 = (path) => path === linuxBundledHelperPath
+  assert.equal(shouldUseBundledHelper({
+    platform: 'linux', arch: 'x64', isWslEnv: false, fileExists: onlyX64,
+  }), true)
+  assert.equal(shouldUseBundledHelper({
+    platform: 'linux', arch: 'arm64', isWslEnv: false, fileExists: onlyX64,
+  }), false)
+  assert.equal(shouldUseBundledHelper({
+    platform: 'linux', arch: 'riscv64', isWslEnv: false, fileExists: () => true,
+  }), false)
 })
 
 test('missing bundled helper falls back to the configured Python', () => {

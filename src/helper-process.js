@@ -5,14 +5,18 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
 } from 'node:fs'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { createHelperLog, defaultHelperLogPath } from './helper-log.js'
 import {
   CompanionMessageKind,
   createMessage,
@@ -23,6 +27,14 @@ const here = dirname(fileURLToPath(import.meta.url))
 const defaultHelperPath = resolve(here, '..', 'runtime', 'helper.py')
 const bundledHelperPath = resolve(here, '..', 'runtime', 'bin', 'win32-x64', 'dsh-dafeiyu-helper.exe')
 const linuxBundledHelperPath = resolve(here, '..', 'runtime', 'bin', 'linux-x64', 'dsh-dafeiyu-helper')
+const linuxArm64BundledHelperPath = resolve(
+  here,
+  '..',
+  'runtime',
+  'bin',
+  'linux-arm64',
+  'dsh-dafeiyu-helper',
+)
 const darwinBundledHelperPath = resolve(
   here,
   '..',
@@ -63,10 +75,89 @@ function isWsl() {
   }
 }
 
-function shouldUseBundledHelper() {
-  if (process.platform === 'win32' || isWsl()) return existsSync(bundledHelperPath)
-  if (process.platform === 'linux') return existsSync(linuxBundledHelperPath)
-  return process.platform === 'darwin' && existsSync(darwinBundledHelperPath)
+// First launches of the PyInstaller one-file Helper extract the whole Qt runtime
+// (~108 MB) into the OS temp directory. Real-time antivirus scanning can stretch
+// that well past the old 60 s budget (issue #88), so cold starts get a longer
+// budget while restarts of an already-working Helper stay short.
+const COLD_START_TIMEOUT_MS = 180000
+const WARM_START_TIMEOUT_MS = 60000
+const RESTART_START_TIMEOUT_MS = 90000
+// Leftovers are only removed once they are clearly dead. A second DSH profile
+// may still be running from its own extraction directory.
+const STALE_EXTRACTION_AGE_MS = 24 * 60 * 60 * 1000
+
+function linuxHelperForArch(arch, {
+  x64 = linuxBundledHelperPath,
+  arm64 = linuxArm64BundledHelperPath,
+} = {}) {
+  if (arch === 'x64') return x64
+  if (arch === 'arm64') return arm64
+  return undefined
+}
+
+function shouldUseBundledHelper({
+  platform = process.platform,
+  arch = process.arch,
+  isWslEnv = isWsl(),
+  fileExists = existsSync,
+} = {}) {
+  if (platform === 'win32' || isWslEnv) return fileExists(bundledHelperPath)
+  if (platform === 'linux') {
+    // Never treat an x86-64 binary as usable on aarch64: execve returns
+    // ENOEXEC, libc retries through /bin/sh and the resulting syntax error hides
+    // the real cause (issue #91).
+    const bundled = linuxHelperForArch(arch)
+    return bundled !== undefined && fileExists(bundled)
+  }
+  return platform === 'darwin' && fileExists(darwinBundledHelperPath)
+}
+
+// PyInstaller one-file Helpers extract to `_MEI*` under the child's temp
+// directory. Pointing that directory at the plugin cache keeps the leftovers
+// discoverable, so stale copies can be reclaimed (issue #88). WSL launches a
+// Windows EXE, whose temp directory belongs to Windows, so it is excluded.
+function defaultHelperTempDirectory({
+  platform = process.platform,
+  env = process.env,
+  home = homedir(),
+} = {}) {
+  if (platform === 'win32') {
+    const base = env.LOCALAPPDATA || join(home, 'AppData', 'Local')
+    return join(base, 'dsh-dafeiyu', 'tmp')
+  }
+  if (platform === 'linux') {
+    const base = env.XDG_CACHE_HOME || join(home, '.cache')
+    return join(base, 'dsh-dafeiyu', 'tmp')
+  }
+  return undefined
+}
+
+function cleanStaleExtractionDirectories(directory, {
+  maxAgeMs = STALE_EXTRACTION_AGE_MS,
+  now = Date.now(),
+  readDirectory = readdirSync,
+  fileStat = statSync,
+  remove = rmSync,
+} = {}) {
+  const removed = []
+  let entries
+  try {
+    entries = readDirectory(directory, { withFileTypes: true })
+  } catch {
+    return removed
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('_MEI')) continue
+    const path = join(directory, entry.name)
+    try {
+      if (now - fileStat(path).mtimeMs < maxAgeMs) continue
+      remove(path, { recursive: true, force: true })
+      removed.push(path)
+    } catch {
+      // A directory another process still owns is simply retried next start.
+    }
+  }
+  return removed
 }
 
 function isBundledHelperCommand(command) {
@@ -183,9 +274,11 @@ function cacheWslBundledHelper({
 
 function resolveHelperLaunch({
   platform,
+  arch = process.arch,
   isWslEnv,
   bundledPath,
   linuxBundledPath = linuxBundledHelperPath,
+  linuxArm64BundledPath = linuxArm64BundledHelperPath,
   darwinBundledPath = darwinBundledHelperPath,
   helperPath,
   pythonEnv,
@@ -230,8 +323,23 @@ function resolveHelperLaunch({
       args: ['/d', '/c', windowsPath(launchPath)],
     }
   }
-  if (platform === 'linux' && fileExists(linuxBundledPath)) {
-    return { command: linuxBundledPath, args: [] }
+  if (platform === 'linux') {
+    const bundled = linuxHelperForArch(arch, { x64: linuxBundledPath, arm64: linuxArm64BundledPath })
+    if (bundled !== undefined && fileExists(bundled)) {
+      return { command: bundled, args: [] }
+    }
+    const command = pythonEnv || 'python3'
+    // Only mention an architecture mismatch when a Helper for another
+    // architecture is present. A trimmed source checkout simply has no bundle.
+    const bundledForOtherArch = [
+      ['x64', linuxBundledPath],
+      ['arm64', linuxArm64BundledPath],
+    ].some(([candidate, path]) => candidate !== arch && fileExists(path))
+    const launch = { command, args: defaultArgs(command, helperPath) }
+    if (bundledForOtherArch) {
+      launch.notice = `no bundled Helper for linux/${arch}; falling back to ${command} (install PySide6 or use a release with a linux/${arch} Helper)`
+    }
+    return launch
   }
   const command = pythonEnv || (platform === 'win32' ? 'py' : 'python3')
   return { command, args: defaultArgs(command, helperPath) }
@@ -240,6 +348,7 @@ function resolveHelperLaunch({
 function defaultLaunch(headless = false) {
   return resolveHelperLaunch({
     platform: process.platform,
+    arch: process.arch,
     isWslEnv: isWsl(),
     bundledPath: bundledHelperPath,
     linuxBundledPath: linuxBundledHelperPath,
@@ -272,6 +381,20 @@ export function resolveHelperEnvironment(environment = process.env, overrides = 
   return env
 }
 
+function withHelperTempDirectory(environment, directory) {
+  // Windows environment names are case-insensitive; drop every spelling before
+  // setting the canonical uppercase variables so the child cannot inherit a
+  // stale Temp/TMP from the Host.
+  for (const key of Object.keys(environment)) {
+    const upper = key.toUpperCase()
+    if (upper === 'TEMP' || upper === 'TMP' || upper === 'TMPDIR') delete environment[key]
+  }
+  environment.TEMP = directory
+  environment.TMP = directory
+  environment.TMPDIR = directory
+  return environment
+}
+
 export class HelperProcess {
   constructor(options = {}, logger = console) {
     this.options = options
@@ -288,9 +411,23 @@ export class HelperProcess {
     this.heartbeatTimer = undefined
     this.startupTimer = undefined
     this.lastPongAt = 0
+    this.lastStartAt = 0
     this.readyAt = 0
     this.writeBlocked = false
     this.queueDropWarned = false
+    this.startAttempts = 0
+    this.launchNoticeLogged = false
+    this.launchHintLogged = false
+    this.pythonHintLogged = false
+    this.tempPrepared = false
+    // An explicit command means tests or a custom launcher: do not touch the
+    // user's temp directory or log file unless the caller asks for it.
+    this.tempDirectory = this.options.tempDirectory !== undefined
+      ? this.options.tempDirectory
+      : (this.options.command || isWsl() ? undefined : defaultHelperTempDirectory())
+    this.log = this.options.logFile !== undefined
+      ? createHelperLog(this.options.logFile)
+      : createHelperLog(this.options.command ? undefined : defaultHelperLogPath())
   }
 
   start() {
@@ -299,7 +436,10 @@ export class HelperProcess {
     // probing). Never let that escape: it would crash the host when it happens
     // inside the restart timer. Treat it like any other start failure instead.
     let child
+    let startupTimeoutMs
     try {
+      this.startAttempts += 1
+      this.lastStartAt = Date.now()
       const headless = this.options.headless ?? process.env.DSH_DAFEIYU_HEADLESS === '1'
       const helperPath = this.options.helperPath || defaultHelperPath
       const launch = this.options.command
@@ -317,9 +457,29 @@ export class HelperProcess {
       if (eventLog) extraArgs.push('--event-log', eventLog)
       if (snapshot) extraArgs.push('--snapshot', snapshot)
 
+      if (launch.notice && !this.launchNoticeLogged) {
+        this.launchNoticeLogged = true
+        this.logger.warn?.(`dsh-dafeiyu ${launch.notice}`)
+        this.#log('WARN', launch.notice)
+      }
+      if (this.startAttempts === 1) {
+        this.#log('INFO', `Helper diagnostics: plugin=${packageVersion}, node=${process.version}, host=${process.platform}/${process.arch}`)
+      }
+      startupTimeoutMs = this.#startupTimeoutMs()
+      this.#log('INFO', `start attempt ${this.startAttempts}: ${command} ${[...args, ...extraArgs].join(' ')} (startupTimeoutMs=${startupTimeoutMs}, temp=${this.tempDirectory ?? 'system'})`)
+
+      const environment = resolveHelperEnvironment(process.env, this.options.env)
+      if (this.tempDirectory) {
+        this.#prepareTempDirectory()
+        // PyInstaller's one-file bootloader extracts to `_MEI*` under these
+        // variables. Keeping them in the plugin cache makes the leftovers
+        // reclaimable instead of scattering gigabytes through %TEMP%.
+        withHelperTempDirectory(environment, this.tempDirectory)
+      }
+
       child = spawn(command, [...args, ...extraArgs], {
         cwd: this.options.cwd || resolve(here, '..'),
-        env: resolveHelperEnvironment(process.env, this.options.env),
+        env: environment,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })
@@ -327,6 +487,7 @@ export class HelperProcess {
       this.child = undefined
       this.spawned = false
       this.logger.error?.(`dsh-dafeiyu helper failed to start: ${error.message}`)
+      this.#log('ERROR', `launch error: ${error.message}`)
       if (!this.stopping && !this.restartSuppressed) {
         this.#countStartFailure(`launch error: ${error.message}`)
       }
@@ -339,10 +500,12 @@ export class HelperProcess {
     child.stdout.on('error', () => {})
     child.stderr.on('error', () => {})
     child.once('spawn', () => {
-      const startupTimeoutMs = this.options.startupTimeoutMs ?? 60000
+      this.#log('INFO', `spawned pid=${String(child.pid)}`)
       this.startupTimer = setTimeout(() => {
         if (this.child === child && !this.spawned) {
-          this.logger.warn?.('dsh-dafeiyu helper readiness timed out')
+          const diagnostics = this.log?.path ? `; diagnostics: ${this.log.path}` : ''
+          this.logger.warn?.(`dsh-dafeiyu helper readiness timed out after ${startupTimeoutMs}ms${diagnostics}`)
+          this.#log('ERROR', `readiness timed out after ${startupTimeoutMs}ms; killing helper pid=${String(child.pid)}`)
           child.kill()
         }
       }, startupTimeoutMs)
@@ -350,6 +513,13 @@ export class HelperProcess {
     })
     child.once('error', (error) => {
       this.logger.error?.(`dsh-dafeiyu helper failed to start: ${error.message}`)
+      this.#log('ERROR', `spawn error: ${error.message}`)
+      if (!this.launchHintLogged && error.code === 'ENOENT') {
+        this.launchHintLogged = true
+        const hint = `dsh-dafeiyu Helper launch command was not found. If the Python fallback was selected, install python3 and "PySide6>=6.7,<7" for ${process.platform}/${process.arch}.`
+        this.logger.error?.(hint)
+        this.#log('ERROR', hint)
+      }
       if (this.child !== child) return
       this.child = undefined
       this.spawned = false
@@ -363,6 +533,7 @@ export class HelperProcess {
     })
     child.once('exit', (code, signal) => {
       if (this.child !== child) return
+      this.#log('INFO', `helper exited code=${String(code)} signal=${String(signal)} ready=${String(this.spawned)} runtimeMs=${this.readyAt > 0 ? Date.now() - this.readyAt : 0}`)
       this.child = undefined
       const wasReady = this.spawned
       const readyAt = this.readyAt
@@ -392,7 +563,18 @@ export class HelperProcess {
     })
     createInterface({ input: child.stdout }).on('line', (line) => this.#handleReply(line))
     createInterface({ input: child.stderr }).on('line', (line) => {
-      if (line.trim()) this.logger.warn?.(`dsh-dafeiyu helper: ${line}`)
+      if (!line.trim()) return
+      this.logger.warn?.(`dsh-dafeiyu helper: ${line}`)
+      this.#log('WARN', `helper stderr: ${line.slice(0, 2000)}`)
+      // The Python fallback is a supported path on architectures without a
+      // bundled Helper; name the missing package instead of leaving only a
+      // traceback in a console the user may never see (issue #91).
+      if (!this.pythonHintLogged && /(ModuleNotFoundError|ImportError).*PySide6/.test(line)) {
+        this.pythonHintLogged = true
+        const hint = `dsh-dafeiyu fell back to the Python Helper but PySide6 is unavailable. Install "PySide6>=6.7,<7" for ${process.platform}/${process.arch}, or install a release that bundles a Helper for this architecture.`
+        this.logger.error?.(hint)
+        this.#log('ERROR', hint)
+      }
     })
     return child
   }
@@ -415,6 +597,7 @@ export class HelperProcess {
   }
 
   stop(reason = 'plugin-disposed') {
+    this.#log('INFO', `stop requested (${reason})`)
     this.stopping = true
     this.#clearHeartbeat()
     if (this.restartTimer) clearTimeout(this.restartTimer)
@@ -497,6 +680,7 @@ export class HelperProcess {
         this.spawned = true
         this.readyAt = Date.now()
         this.lastPongAt = Date.now()
+        this.#log('INFO', `ready after ${String(this.lastStartAt ? this.readyAt - this.lastStartAt : 0)}ms`)
         this.#clearStartupTimer()
         if (firstSpawn) this.#flushQueue()
         else {
@@ -534,6 +718,7 @@ export class HelperProcess {
       if (!child || !this.spawned) return
       if (Date.now() - this.lastPongAt > timeoutMs) {
         this.logger.warn?.('dsh-dafeiyu helper heartbeat timed out')
+        this.#log('ERROR', `heartbeat timed out after ${String(Date.now() - this.lastPongAt)}ms; killing helper`)
         child.kill()
         return
       }
@@ -552,12 +737,42 @@ export class HelperProcess {
     this.startupTimer = undefined
   }
 
+  #startupTimeoutMs() {
+    if (this.options.startupTimeoutMs !== undefined) return this.options.startupTimeoutMs
+    if (this.hasEverSpawned) return WARM_START_TIMEOUT_MS
+    // Only the very first attempt pays the one-file extraction and cold
+    // antivirus scan. Later retries reuse whatever the first attempt cached.
+    if (this.startAttempts <= 1) return COLD_START_TIMEOUT_MS
+    return RESTART_START_TIMEOUT_MS
+  }
+
+  #prepareTempDirectory() {
+    if (this.tempPrepared) return
+    this.tempPrepared = true
+    try {
+      mkdirSync(this.tempDirectory, { recursive: true })
+      const removed = cleanStaleExtractionDirectories(this.tempDirectory)
+      if (removed.length > 0) {
+        this.#log('INFO', `removed ${removed.length} stale Helper extraction director${removed.length === 1 ? 'y' : 'ies'} from ${this.tempDirectory}`)
+      }
+    } catch (error) {
+      this.#log('WARN', `unable to prepare Helper temp directory ${this.tempDirectory}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  #log(level, message) {
+    this.log?.write(level, message)
+  }
+
   #countStartFailure(reason) {
     this.startFailures += 1
     const maxFailures = this.options.maxStartFailures ?? 5
+    this.#log('ERROR', `start failure ${this.startFailures}/${maxFailures}: ${reason}`)
     if (this.startFailures >= maxFailures) {
       this.restartSuppressed = true
-      this.logger.error?.(`dsh-dafeiyu helper failed to start ${this.startFailures} times; giving up (${reason})`)
+      const diagnostics = this.log?.path ? `; diagnostics: ${this.log.path}` : ''
+      this.logger.error?.(`dsh-dafeiyu helper failed to start ${this.startFailures} times; giving up (${reason})${diagnostics}`)
+      this.#log('ERROR', `giving up after ${this.startFailures} failed starts; the companion stays disabled until the next DSH start`)
       return
     }
     this.logger.warn?.(`dsh-dafeiyu helper failed to start; scheduling restart (${this.startFailures}/${maxFailures}) (${reason})`)
@@ -580,10 +795,14 @@ export class HelperProcess {
 }
 
 export {
+  COLD_START_TIMEOUT_MS,
+  RESTART_START_TIMEOUT_MS,
+  WARM_START_TIMEOUT_MS,
   bundledHelperPath,
+  cleanStaleExtractionDirectories,
   darwinBundledHelperPath,
-  linuxBundledHelperPath,
   defaultHelperPath,
+  defaultHelperTempDirectory,
   defaultArgs,
   defaultCmdExe,
   defaultCommand,
@@ -593,6 +812,9 @@ export {
   cacheWslBundledHelper,
   isBundledHelperCommand,
   isWsl,
+  linuxArm64BundledHelperPath,
+  linuxBundledHelperPath,
+  linuxHelperForArch,
   resolveHelperLaunch,
   shouldUseBundledHelper,
   toWindowsPath,

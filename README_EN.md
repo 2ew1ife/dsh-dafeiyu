@@ -12,7 +12,7 @@
 
 BigFish starts and stops with its DSH Host. A transparent, frameless native window keeps the Agent's task status visible while you work in other apps.
 
-> **Current stable version: 0.1.18.** Fixes opening official Desktop from the context menu and character displacement during status-card changes or notifications. Install `dsh-dafeiyu@0.1.18`, or download **`dsh-dafeiyu-0.1.18.tgz`** from the [latest release](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest). Windows, Linux, and macOS share this one package. GitHub's automatic **Source code (zip / tar.gz)** downloads are source archives, not installable packages.
+> **Current stable version: 0.1.19.** Fixes the companion disappearing silently after a cold-start Helper timeout (the first wait is now 180 s and writes a diagnostic log), roughly 100 MB of leftover temp data per failed start, and Linux arm64 silently running the x86-64 Helper. Install `dsh-dafeiyu@0.1.19`, or download **`dsh-dafeiyu-0.1.19.tgz`** from the [latest release](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest). Windows, Linux, and macOS share this one package. GitHub's automatic **Source code (zip / tar.gz)** downloads are source archives, not installable packages.
 
 <img src="docs/images/balance-preview.png" width="460" alt="BigFish displays API balance below the current task">
 
@@ -49,21 +49,21 @@ For command-line installation, updates, or removal, fully quit the target DSH Ho
 With a global DSH CLI:
 
 ```powershell
-dsh plugin --profile web add dsh-dafeiyu@0.1.18
+dsh plugin --profile web add dsh-dafeiyu@0.1.19
 dsh web
 ```
 
 With `npx`, without a global install:
 
 ```powershell
-npx -y @deepseek-ai/dsh plugin --profile web add dsh-dafeiyu@0.1.18
+npx -y @deepseek-ai/dsh plugin --profile web add dsh-dafeiyu@0.1.19
 npx -y @deepseek-ai/dsh web
 ```
 
 From a DeepSeek Harness source checkout, run in that checkout:
 
 ```powershell
-pnpm dsh plugin --profile web add dsh-dafeiyu@0.1.18
+pnpm dsh plugin --profile web add dsh-dafeiyu@0.1.19
 pnpm dsh web
 ```
 
@@ -72,7 +72,7 @@ pnpm dsh web
 Install directly in the app:
 
 1. Open the official DeepSeek Harness Desktop app and select **Plugins** in the sidebar.
-2. Select **Add plugin**, enter `dsh-dafeiyu@0.1.18`, and select **Install**.
+2. Select **Add plugin**, enter `dsh-dafeiyu@0.1.19`, and select **Install**.
 3. After installation, select **Enable now**. BigFish appears on your desktop.
 4. Open **dsh-dafeiyu** in the plugin list to adjust the character, bubble, and balance settings. Changes apply live.
 
@@ -87,7 +87,7 @@ For command-line installation:
 3. Run:
 
    ```powershell
-   dsh plugin --profile desktop add dsh-dafeiyu@0.1.18
+   dsh plugin --profile desktop add dsh-dafeiyu@0.1.19
    ```
 
 4. Reopen Desktop and select dsh-dafeiyu under sidebar Plugins.
@@ -96,14 +96,14 @@ The `dsh` command above must belong to Desktop. A standalone npm or `npx @deepse
 
 ### Release archive
 
-Open the [latest release](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest), download **`dsh-dafeiyu-0.1.18.tgz`** under **Assets**, and install it with the appropriate client's CLI. Do not unpack it first. Historical versions and **Source code** archives are not the recommended installation:
+Open the [latest release](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest), download **`dsh-dafeiyu-0.1.19.tgz`** under **Assets**, and install it with the appropriate client's CLI. Do not unpack it first. Historical versions and **Source code** archives are not the recommended installation:
 
 ```powershell
 # WebUI; replace the path with your downloaded file
-npx -y @deepseek-ai/dsh plugin --profile web add "C:\Downloads\dsh-dafeiyu-0.1.18.tgz"
+npx -y @deepseek-ai/dsh plugin --profile web add "C:\Downloads\dsh-dafeiyu-0.1.19.tgz"
 
 # Official Desktop; use its bundled CLI
-dsh plugin --profile desktop add "C:\Downloads\dsh-dafeiyu-0.1.18.tgz"
+dsh plugin --profile desktop add "C:\Downloads\dsh-dafeiyu-0.1.19.tgz"
 ```
 
 Desktop also accepts the full `.tgz` path in its **Add plugin** field.
@@ -147,6 +147,7 @@ Settings apply live. The native context menu offers size, motion, client navigat
 | --- | --- |
 | Windows 10 / 11 x64 | Bundled Helper; WSL2 uses Windows interoperability |
 | Linux x64 | Bundled Qt Helper; graphical desktop and glibc 2.35+ required; Ubuntu 24.04 has recorded acceptance results |
+| Linux arm64 | No architecture-matched Helper is bundled; falls back to the Python Helper and needs `python3` plus `PySide6>=6.7,<7`, or writes an explicit log entry |
 | macOS 12+ | Native Swift / AppKit Universal Helper; experimental |
 
 Release packages include the Helper. A normal installation needs neither Python nor a separately launched companion. Source development requires building the Helper. macOS font and partial-offscreen fixes pass CI; their appearance and multi-monitor behavior still need real-machine validation.
@@ -155,7 +156,7 @@ The native window appears on the machine running the Host. A remote server or a 
 
 ## Update and troubleshoot
 
-Desktop 0.2.0-rc.2 does not offer automatic plugin updates. Uninstall BigFish in the Plugins page, add `dsh-dafeiyu@0.1.18`, and enable it. Alternatively use Desktop's bundled CLI below.
+Desktop 0.2.0-rc.2 does not offer automatic plugin updates. Uninstall BigFish in the Plugins page, add `dsh-dafeiyu@0.1.19`, and enable it. Alternatively use Desktop's bundled CLI below.
 
 Quit the target Host, update, and restart:
 
@@ -172,7 +173,12 @@ Desktop's plugin manager is also supported. Rollback, removal, Windows `EPERM`, 
 - DSH 0.2 settings: install the current stable release and open sidebar Plugins → dsh-dafeiyu. Previous Hosts retain their older settings entry.
 - Installation reports only `[exit 1]`: include the detailed plugin-manager log, such as `hub.log`, DSH version, OS, and install method.
 - Balance unavailable: check DSH's credentials and gateway endpoint support.
-- Companion missing: check the profile, enable switch, and the Host's graphical desktop.
+- Companion missing: check the profile, enable switch, and the Host's graphical desktop. Helper start failures now write a log:
+  - Windows: `%LOCALAPPDATA%\dsh-dafeiyu\logs\helper.log`
+  - macOS: `~/Library/Logs/dsh-dafeiyu/helper.log`
+  - Linux: `${XDG_STATE_HOME:-~/.local/state}/dsh-dafeiyu/helper.log`
+
+  The first launch extracts roughly 100 MB of Qt runtime into a temp directory, which a real-time antivirus scan can stretch well past a minute; the first readiness budget is now 180 s (later starts 60 s). Extraction temp lives in `%LOCALAPPDATA%\dsh-dafeiyu\tmp` on Windows and `~/.cache/dsh-dafeiyu/tmp` on Linux, where `_MEI*` leftovers older than a day are reclaimed on the next start. Set `DSH_DAFEIYU_LOG_FILE=<path>` to move the log, or `off` to disable it. The log contains local paths and start errors only, never credentials, and can be attached to a report.
 
 The [issue / PR triage](https://github.com/QCYTSN/dsh-dafeiyu/blob/main/docs/GITHUB_TRIAGE.md) separates implemented fixes from reports needing more evidence. [Acceptance records](https://github.com/QCYTSN/dsh-dafeiyu/blob/main/docs/ACCEPTANCE.md) contain historical validation. Older version numbers in these records are for traceability, not installation recommendations.
 

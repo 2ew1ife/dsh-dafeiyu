@@ -75,7 +75,7 @@ test('plugin forwards DSH-shaped session events and owns helper shutdown', async
     },
   }
 
-  apply(ctx, { balanceEnabled: false, helper: { headless: true, eventLog } })
+  apply(ctx, { balanceEnabled: false, helper: { headless: true, eventLog, logFile: null, tempDirectory: null } })
   const session = { header: { id: 'phase0-real-shape' } }
   listeners.get('session/event')(session, { type: 'turn/start', seq: 1, data: { turn: 1 } })
   listeners.get('session/event')(session, {
@@ -146,7 +146,7 @@ test('live settings keep the active project state without restarting the helper'
     },
   }
 
-  apply(ctx, { helper: { headless: true, eventLog } })
+  apply(ctx, { helper: { headless: true, eventLog, logFile: null, tempDirectory: null } })
   const activeSession = { header: { id: 'live-settings', cwd: 'D:\\work\\active-project' } }
   listeners.get('session/event')(activeSession, { type: 'turn/start', seq: 1, data: { turn: 1 } })
   listeners.get('session/event')(activeSession, {

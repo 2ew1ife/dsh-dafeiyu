@@ -2,6 +2,31 @@
 
 > This is release history. For installation, use the [latest stable release](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest), not commands from older entries.
 
+## 0.1.19 · 2026-10-26
+
+### Fixed
+
+- Give the first Helper start a 180-second readiness budget (90 seconds on a
+  retry, 60 seconds once the Helper has been ready before). A cold PyInstaller
+  extraction of about 100 MB plus real-time antivirus scanning can exceed the
+  old 60-second limit, which left the companion absent with no explanation
+  ([#88](https://github.com/QCYTSN/dsh-dafeiyu/issues/88)).
+- Write Helper lifecycle diagnostics to a bounded log file: the launch command,
+  readiness timing, readiness timeouts, exit codes, stderr, retry count and the
+  final give-up reason. A Python fallback also names a missing `PySide6`
+  package. Locations are documented in the README; `DSH_DAFEIYU_LOG_FILE` moves
+  or disables the file.
+- Run PyInstaller one-file Helpers with their extraction temporary directory
+  inside the plugin cache, and reclaim stale `_MEI*` directories older than one
+  day on the next start. Failed launches no longer leave roughly 100 MB per
+  attempt in the OS temp directory.
+- Select the bundled Linux Helper by `process.arch`. Linux arm64 no longer
+  tries the x86-64 binary (which failed as an `/bin/sh` syntax error), falls
+  back to the Python Helper, and logs an explicit `linux/arm64` message instead
+  of retrying silently ([#91](https://github.com/QCYTSN/dsh-dafeiyu/issues/91)).
+  `scripts/build-helper.sh` now builds `linux-x64` or `linux-arm64` on the
+  matching host architecture.
+
 ## 0.1.18 · 2026-10-10
 
 ### Fixed

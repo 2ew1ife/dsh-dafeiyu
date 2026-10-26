@@ -5,6 +5,21 @@
 > [updating guide](UPDATING.md). This record is retained in GitHub and excluded
 > from the installable package.
 
+## 2026-10-26 · Helper diagnostics and architecture selection / 0.1.19
+
+- Passed 125 JavaScript and 54 Python tests locally on Windows, including new
+  cases for the cold/warm/retry readiness budgets, bounded log rotation, stale
+  `_MEI*` reclamation, child temp-directory injection, the actionable PySide6
+  message, and Linux arm64 selecting `linux-arm64` or falling back to Python.
+- Launched the packaged Windows Helper through the new default path with
+  `--headless`: it reported READY in 888 ms, wrote
+  `%LOCALAPPDATA%\dsh-dafeiyu\logs\helper.log`, and ran with
+  `%LOCALAPPDATA%\dsh-dafeiyu\tmp` as its extraction directory.
+- Not reproduced: the Huorong antivirus cold-scan delay from issue #88 and a
+  real Linux arm64 host from issue #91. The timeout and fallback changes are
+  covered by controlled tests, not those exact environments. No arm64 Helper is
+  built or published yet; arm64 continues through the Python fallback.
+
 ## 2026-10-10 · Desktop opening and fixed character position / 0.1.18
 
 - Reproduced opening failure with the existing Windows Desktop 0.2.0-rc.2:

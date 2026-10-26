@@ -3,15 +3,25 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 entry="$project_root/runtime/helper.py"
-output="$project_root/runtime/bin/linux-x64"
 work="$project_root/.build/helper-linux"
 project_python="$project_root/.build/python-env/bin/python"
 python="${DSH_DAFEIYU_BUILD_PYTHON:-}"
 
-if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
-  echo "Linux Helper builds require Linux x86_64." >&2
+if [[ "$(uname -s)" != "Linux" ]]; then
+  echo "Linux Helper builds require Linux." >&2
   exit 1
 fi
+
+# PyInstaller cannot cross-compile a frozen Qt Helper. Build on the target
+# architecture and publish the result next to the matching runtime/bin entry.
+case "$(uname -m)" in
+  x86_64) output="$project_root/runtime/bin/linux-x64" ;;
+  aarch64|arm64) output="$project_root/runtime/bin/linux-arm64" ;;
+  *)
+    echo "Linux Helper builds require x86_64 or aarch64; found $(uname -m)." >&2
+    exit 1
+    ;;
+esac
 
 if [[ -z "$python" ]]; then
   if [[ -x "$project_python" ]]; then

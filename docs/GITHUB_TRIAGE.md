@@ -2,6 +2,12 @@
 
 > 此文件记录 issue / PR 的处理依据，不是安装指南。旧版本号用于追溯；安装请使用[当前稳定版](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)。本记录不随安装包分发。
 
+## 2026-10-26 修复（0.1.19）
+
+- [#88 Windows 冷启动无角色](https://github.com/QCYTSN/dsh-dafeiyu/issues/88)：首次就绪等待由 60 秒放宽到 180 秒（重试 90 秒，已就绪过的重启 60 秒）；Helper 生命周期写入 `%LOCALAPPDATA%\dsh-dafeiyu\logs\helper.log`（macOS / Linux 路径见 README），包含启动命令、就绪耗时、超时、退出码、stderr、重试次数与最终放弃原因。PyInstaller 解压临时目录改到插件缓存（Windows `%LOCALAPPDATA%\dsh-dafeiyu\tmp`、Linux `~/.cache/dsh-dafeiyu/tmp`），超过一天的 `_MEI*` 目录在下次启动时清理，不再每次失败留约 100 MB 在系统临时目录。没有改 PyInstaller onedir 形态。
+- [#91 Linux arm64 无角色](https://github.com/QCYTSN/dsh-dafeiyu/issues/91)：按 `process.arch` 选择随包 Helper，arm64 不再执行 x86-64 二进制（`ENOEXEC` 会被 `/bin/sh` 解释成语法错误）；缺少 `linux-arm64` Helper 时回退 `python3 runtime/helper.py`，日志写明架构与缺失的 PySide6。`scripts/build-helper.sh` 支持在 aarch64 主机产出 `runtime/bin/linux-arm64`。本轮未新增 arm64 CI / 发布任务，因此 npm 包仍只带 x64 Helper。
+- 既有结论不变：[#87](https://github.com/QCYTSN/dsh-dafeiyu/issues/87) 的位置偏移与桌面端唤起已在 0.1.18 修复，双击打开客户端仍按设计保留为摸头；[#81](https://github.com/QCYTSN/dsh-dafeiyu/issues/81)、[#83](https://github.com/QCYTSN/dsh-dafeiyu/issues/83)、[#75](https://github.com/QCYTSN/dsh-dafeiyu/pull/75) 的修复已在 0.1.15 进入主线。以上均待报告者用新版本复验。
+
 ## 2026-10-10 修复
 
 - [#87](https://github.com/QCYTSN/dsh-dafeiyu/issues/87) 与 [#78 的重启后打不开反馈](https://github.com/QCYTSN/dsh-dafeiyu/issues/78#issuecomment-6094058849)：官方 Desktop 的 Host 设置 `ELECTRON_RUN_AS_NODE=1`，Helper 继承后又将该变量传给通过 `dsh://open` 启动的应用。0.1.18 在 Helper 启动边界清除它；本地已有的 Windows Desktop 0.2.0-rc.2 已复现清除前无界面、清除后正常唤起。

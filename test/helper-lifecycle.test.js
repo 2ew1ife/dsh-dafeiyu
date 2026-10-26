@@ -63,7 +63,7 @@ test('helper consumes events and exits when the plugin stops', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-dafeiyu-test-'))
   const eventLog = join(directory, 'events.jsonl')
   const logger = { debug() {}, info() {}, warn() {}, error() {} }
-  const bridge = new HelperProcess({ headless: true, eventLog }, logger)
+  const bridge = new HelperProcess({ headless: true, eventLog, logFile: null, tempDirectory: null }, logger)
   const child = bridge.start()
   const exited = new Promise((resolve, reject) => {
     child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`helper exited with ${String(code)}`)))
@@ -91,6 +91,8 @@ test('helper heartbeat stays healthy and responds without a restart', async () =
     eventLog,
     heartbeatMs: 25,
     heartbeatTimeoutMs: 150,
+    logFile: null,
+    tempDirectory: null,
   }, logger)
   const initialChild = bridge.start()
   bridge.send(createMessage(CompanionMessageKind.STATE, {

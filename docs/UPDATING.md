@@ -2,7 +2,7 @@
 
 先确认插件安装在 `web` 还是官方桌面端的 `desktop` profile。使用命令操作前完全退出对应 Host，包括托盘或后台仍在运行的进程；操作完成后重新启动。使用应用内插件管理时，按应用提示重启。
 
-**当前稳定版为 0.1.18。** 推荐安装 `dsh-dafeiyu@0.1.18`，下载入口固定为[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)。当前版本修复右键打不开官方桌面端及提醒／气泡变化导致的角色偏移，并保留现有动画和余额功能。
+**当前稳定版为 0.1.19。** 推荐安装 `dsh-dafeiyu@0.1.19`，下载入口固定为[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)。当前版本修复 Helper 冷启动超时后角色静默消失（首次等待放宽到 180 秒并写入诊断日志）、失败启动遗留约 100 MB 临时目录，以及 Linux arm64 误用 x86-64 Helper 后静默退出，并保留现有动画和余额功能。
 
 ## WebUI
 
@@ -22,7 +22,7 @@ npx -y @deepseek-ai/dsh plugin --profile web update dsh-dafeiyu
 
 ## 官方桌面端
 
-官方桌面端 0.2.0-rc.2 的安装页面明确说明暂不支持自动更新。打开左侧 **插件**，卸载 **dsh-dafeiyu**，再通过 **添加插件** 安装 `dsh-dafeiyu@0.1.18`，并点击 **立即启用**。若应用提示刷新或重启，按提示操作。
+官方桌面端 0.2.0-rc.2 的安装页面明确说明暂不支持自动更新。打开左侧 **插件**，卸载 **dsh-dafeiyu**，再通过 **添加插件** 安装 `dsh-dafeiyu@0.1.19`，并点击 **立即启用**。若应用提示刷新或重启，按提示操作。
 
 只填包名会选择安装源中的最新版。新版本刚发布时，默认安装源可能仍返回旧版；使用本页的明确版本号，并在安装后核对详情页。以后升级时以[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)为准。
 
@@ -38,14 +38,14 @@ dsh plugin --profile desktop update dsh-dafeiyu
 
 ## 安装当前离线包
 
-从[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)的 **Assets** 下载 **`dsh-dafeiyu-0.1.18.tgz`**。这是 Windows、Linux 和 macOS 共用的安装包；**Source code (zip / tar.gz)** 仅供源码开发。安装包不用解压，用同一 profile 的 `add` 命令替换安装：
+从[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)的 **Assets** 下载 **`dsh-dafeiyu-0.1.19.tgz`**。这是 Windows、Linux 和 macOS 共用的安装包；**Source code (zip / tar.gz)** 仅供源码开发。安装包不用解压，用同一 profile 的 `add` 命令替换安装：
 
 ```powershell
 # WebUI
-npx -y @deepseek-ai/dsh plugin --profile web add "C:\Downloads\dsh-dafeiyu-0.1.18.tgz"
+npx -y @deepseek-ai/dsh plugin --profile web add "C:\Downloads\dsh-dafeiyu-0.1.19.tgz"
 
 # 官方桌面端，自带 CLI
-dsh plugin --profile desktop add "C:\Downloads\dsh-dafeiyu-0.1.18.tgz"
+dsh plugin --profile desktop add "C:\Downloads\dsh-dafeiyu-0.1.19.tgz"
 ```
 
 路径替换为实际下载位置。桌面应用的 **添加插件** 也接受安装包的完整路径。
@@ -88,6 +88,20 @@ dsh plugin --profile desktop remove dsh-dafeiyu
 当前稳定版已经通过在本地缓存运行 Windows Helper，减少安装目录中可执行文件的锁占用。更新前仍需完全退出相关 Host；如果同时运行 WebUI 和 Desktop，分别确认其后台进程已退出。
 
 如果再次失败，保留包含**实际被锁定路径**的完整安装日志。只看到 `[exit 1]` 不足以区分文件锁、包管理器、网络和兼容性检查问题。不要通过删除整个 DSH profile 排错，以免丢失设置和会话。
+
+## 角色不出现 / Helper 启动失败（#88、#91）
+
+从 0.1.19 起，Helper 的启动过程会写入诊断日志，超时、`exited before ready`、`spawn error` 和最终放弃都会留下原因：
+
+- Windows：`%LOCALAPPDATA%\dsh-dafeiyu\logs\helper.log`
+- macOS：`~/Library/Logs/dsh-dafeiyu/helper.log`
+- Linux：`${XDG_STATE_HOME:-~/.local/state}/dsh-dafeiyu/helper.log`
+
+首次启动要把约 100 MB 的 Qt 运行库解压到临时目录，杀毒软件实时扫描可能让冷启动超过一分钟；首次就绪等待上限已放宽到 180 秒（重试 90 秒，已就绪过的重启 60 秒）。解压目录在 Windows 为 `%LOCALAPPDATA%\dsh-dafeiyu\tmp`、Linux 为 `~/.cache/dsh-dafeiyu/tmp`，其中超过一天的 `_MEI*` 残留会在下次启动时清理。旧版本遗留在系统临时目录（如 `%TEMP%\_MEI*`）的目录不会自动删除，确认没有 Helper 运行时可以手动清理。
+
+Linux arm64 的 npm 包内没有对应的随架构 Helper，会回退到 `python3 runtime/helper.py`；需要给运行 Host 的 Python 安装 `PySide6>=6.7,<7`（`python3 -m pip install --user "PySide6>=6.7,<7"`）。日志会明确写出 arch 与缺失的 PySide6，而不是静默重试后放弃。
+
+需要改变日志位置时设置 `DSH_DAFEIYU_LOG_FILE=<路径>`，设为 `off` 可关闭。日志只包含本地路径与 Helper 的启动/错误信息，不包含凭据。
 
 ## 更新通知
 
