@@ -2,7 +2,7 @@
 
 先确认插件安装在 `web` 还是官方桌面端的 `desktop` profile。使用命令操作前完全退出对应 Host，包括托盘或后台仍在运行的进程；操作完成后重新启动。使用应用内插件管理时，按应用提示重启。
 
-**当前稳定版为 0.1.19。** 推荐安装 `dsh-dafeiyu@0.1.19`，下载入口固定为[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)。当前版本修复 Helper 冷启动超时后角色静默消失（首次等待放宽到 180 秒并写入诊断日志）、失败启动遗留约 100 MB 临时目录，以及 Linux arm64 误用 x86-64 Helper 后静默退出，并保留现有动画和余额功能。
+**当前稳定版为 0.1.20。** 推荐安装 `dsh-dafeiyu@0.1.20`，下载入口固定为[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)。当前版本修复 macOS 透明窗口吞掉下层窗口点击（角色和气泡以外的区域现在会穿透），并在气泡隐藏时把窗口收窄到角色大小；同时保留 0.1.19 的 Helper 冷启动诊断、临时目录清理与 Linux arm64 回退。
 
 ## WebUI
 
@@ -22,7 +22,7 @@ npx -y @deepseek-ai/dsh plugin --profile web update dsh-dafeiyu
 
 ## 官方桌面端
 
-官方桌面端 0.2.0-rc.2 的安装页面明确说明暂不支持自动更新。打开左侧 **插件**，卸载 **dsh-dafeiyu**，再通过 **添加插件** 安装 `dsh-dafeiyu@0.1.19`，并点击 **立即启用**。若应用提示刷新或重启，按提示操作。
+官方桌面端 0.2.0-rc.2 的安装页面明确说明暂不支持自动更新。打开左侧 **插件**，卸载 **dsh-dafeiyu**，再通过 **添加插件** 安装 `dsh-dafeiyu@0.1.20`，并点击 **立即启用**。若应用提示刷新或重启，按提示操作。
 
 只填包名会选择安装源中的最新版。新版本刚发布时，默认安装源可能仍返回旧版；使用本页的明确版本号，并在安装后核对详情页。以后升级时以[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)为准。
 
@@ -38,14 +38,14 @@ dsh plugin --profile desktop update dsh-dafeiyu
 
 ## 安装当前离线包
 
-从[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)的 **Assets** 下载 **`dsh-dafeiyu-0.1.19.tgz`**。这是 Windows、Linux 和 macOS 共用的安装包；**Source code (zip / tar.gz)** 仅供源码开发。安装包不用解压，用同一 profile 的 `add` 命令替换安装：
+从[最新版发布页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)的 **Assets** 下载 **`dsh-dafeiyu-0.1.20.tgz`**。这是 Windows、Linux 和 macOS 共用的安装包；**Source code (zip / tar.gz)** 仅供源码开发。安装包不用解压，用同一 profile 的 `add` 命令替换安装：
 
 ```powershell
 # WebUI
-npx -y @deepseek-ai/dsh plugin --profile web add "C:\Downloads\dsh-dafeiyu-0.1.19.tgz"
+npx -y @deepseek-ai/dsh plugin --profile web add "C:\Downloads\dsh-dafeiyu-0.1.20.tgz"
 
 # 官方桌面端，自带 CLI
-dsh plugin --profile desktop add "C:\Downloads\dsh-dafeiyu-0.1.19.tgz"
+dsh plugin --profile desktop add "C:\Downloads\dsh-dafeiyu-0.1.20.tgz"
 ```
 
 路径替换为实际下载位置。桌面应用的 **添加插件** 也接受安装包的完整路径。
@@ -91,7 +91,7 @@ dsh plugin --profile desktop remove dsh-dafeiyu
 
 ## 角色不出现 / Helper 启动失败（#88、#91）
 
-从 0.1.19 起，Helper 的启动过程会写入诊断日志，超时、`exited before ready`、`spawn error` 和最终放弃都会留下原因：
+从 0.1.20 起，Helper 的启动过程会写入诊断日志，超时、`exited before ready`、`spawn error` 和最终放弃都会留下原因：
 
 - Windows：`%LOCALAPPDATA%\dsh-dafeiyu\logs\helper.log`
 - macOS：`~/Library/Logs/dsh-dafeiyu/helper.log`

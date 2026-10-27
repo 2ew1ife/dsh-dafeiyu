@@ -2,6 +2,13 @@
 
 > 此文件记录 issue / PR 的处理依据，不是安装指南。旧版本号用于追溯；安装请使用[当前稳定版](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)。本记录不随安装包分发。
 
+## 2026-10-27 修复（0.1.20）
+
+- [#92 macOS 透明区吞点击](https://github.com/QCYTSN/dsh-dafeiyu/issues/92)：`PetController` 现在用 30 Hz 指针采样切换 `panel.ignoresMouseEvents`，角色与气泡以外区域把点击交给下层应用；拖动、右键菜单和鼠标按下期间保持可交互。气泡 `hidden` 时 `windowSize()` 收窄到角色尺寸（不再恒定预留 420pt 卡片）。命中判定抽到 `PetGeometry.isInteractive` 并有 Swift 单测。**未在 macOS 实机验证穿透效果**，需要 #92 报告者复测。
+- [#90 Linux Helper CI runner](https://github.com/QCYTSN/dsh-dafeiyu/pull/90)：已合并（merge commit 177e17a）。保留 glibc 2.35 基线，改在 ubuntu-24.04 + ubuntu:22.04 容器构建；四组 CI 通过。仅构建基础设施，不改随包 Helper。
+- [#93 提示音独立开关](https://github.com/QCYTSN/dsh-dafeiyu/pull/93)：CI 已批准并通过。已提交 changes requested：审批系统通知不能只受声音开关控制、默认值会改变升级行为、CHANGELOG 需正式版本段、README_EN 未同步。暂不合并，等作者修订或由维护者整合。
+- #88 / #91 仍等报告者用 0.1.19+ 复测；#81 / #83 等 macOS 实机确认；#80 / #76 / #85 保持原有处理方式。
+
 ## 2026-10-26 修复（0.1.19）
 
 - [#88 Windows 冷启动无角色](https://github.com/QCYTSN/dsh-dafeiyu/issues/88)：首次就绪等待由 60 秒放宽到 180 秒（重试 90 秒，已就绪过的重启 60 秒）；Helper 生命周期写入 `%LOCALAPPDATA%\dsh-dafeiyu\logs\helper.log`（macOS / Linux 路径见 README），包含启动命令、就绪耗时、超时、退出码、stderr、重试次数与最终放弃原因。PyInstaller 解压临时目录改到插件缓存（Windows `%LOCALAPPDATA%\dsh-dafeiyu\tmp`、Linux `~/.cache/dsh-dafeiyu/tmp`），超过一天的 `_MEI*` 目录在下次启动时清理，不再每次失败留约 100 MB 在系统临时目录。没有改 PyInstaller onedir 形态。

@@ -84,6 +84,10 @@ final class PetController: NSObject {
     private var animTimer: Timer?
     private var keepFrontTimer: Timer?
     private var microTimer: Timer?
+    private var clickThroughTimer: Timer?
+    /// A native menu runs its own tracking loop; keep the panel interactive
+    /// until it closes so the timer cannot steal the selection click.
+    private var menuOpen = false
     private var lastTickMs: Int
     private var dragPetOffsetX: CGFloat = 0
     private var dragPetOffsetY: CGFloat = 8
@@ -193,9 +197,13 @@ final class PetController: NSObject {
     private var cardWidthPoints: CGFloat { 420 * bubbleScale }
 
     private func windowSize() -> NSSize {
-        NSSize(
-            width: max(petWidth + 50, cardWidthPoints + 28),
-            height: petHeight + cardHeightPoints + 34
+        // A hidden card must not keep the window as wide as a 420pt card:
+        // at scale 0.55 that left roughly 385pt of mostly transparent window
+        // around a ~219pt character (issue #92).
+        let showsCard = bubbleMode != "hidden"
+        return NSSize(
+            width: showsCard ? max(petWidth + 50, cardWidthPoints + 28) : petWidth + 50,
+            height: petHeight + (showsCard ? cardHeightPoints + 34 : 26)
         )
     }
 
@@ -239,6 +247,7 @@ final class PetController: NSObject {
         self.petY = windowY + 8
 
         panel.setFrameOrigin(NSPoint(x: windowX, y: windowY))
+        updateClickThrough()
         contentView?.needsDisplay = true
     }
 
@@ -319,6 +328,7 @@ final class PetController: NSObject {
         guard !isHeadless() else { return }
         panel?.orderFrontRegardless()
         keepFront()
+        updateClickThrough()
     }
 
     @objc private func screenParametersChanged() {
@@ -345,7 +355,37 @@ final class PetController: NSObject {
         keepFrontTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.keepFront()
         }
+        // 30 Hz is enough to hand a click to the application below without
+        // making the user wait; it only compares a point against two rects.
+        clickThroughTimer = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
+            self?.updateClickThrough()
+        }
+        updateClickThrough()
         scheduleMicro()
+    }
+
+    /// AppKit routes a click to this panel before it ever reaches the view
+    /// hierarchy, so `hitTest` alone cannot pass a click to the app below.
+    /// Toggle `ignoresMouseEvents` instead, based on the real pointer position
+    /// (issue #92). Drags and the context menu keep the panel interactive.
+    private func updateClickThrough() {
+        guard let panel = panel, let contentView = contentView else { return }
+        guard !quitting, panel.isVisible, !dragging, !menuOpen else {
+            setClickThrough(false)
+            return
+        }
+        // Never flip the window between mouse-down and mouse-up: a click that
+        // started on the app below must not lose its mouse-up to this panel.
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        let windowPoint = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
+        let viewPoint = contentView.convert(windowPoint, from: nil)
+        let bubble = bubbleVisible() ? bubbleRect() : nil
+        setClickThrough(!PetGeometry.isInteractive(viewPoint, pet: petRect(), bubble: bubble))
+    }
+
+    private func setClickThrough(_ enabled: Bool) {
+        guard let panel = panel, panel.ignoresMouseEvents != enabled else { return }
+        panel.ignoresMouseEvents = enabled
     }
 
     private func keepFront() {
@@ -416,6 +456,9 @@ final class PetController: NSObject {
     func beginDrag() {
         guard !dragging else { return }
         dragging = true
+        // The drag must keep receiving mouseDragged even when the pointer
+        // leaves the character rectangle.
+        setClickThrough(false)
         fadeFromFrame = nil
         // Remember where the pet sits inside the window when the drag starts.
         // During the drag the window moves directly; without re-anchoring the
@@ -464,6 +507,7 @@ final class PetController: NSObject {
             scheduleMicro()
         }
         saveLayout()
+        updateClickThrough()
         contentView?.needsDisplay = true
     }
 
@@ -546,6 +590,11 @@ final class PetController: NSObject {
         quit.target = self
         menu.addItem(quit)
 
+        menuOpen = true
+        defer {
+            menuOpen = false
+            updateClickThrough()
+        }
         NSMenu.popUpContextMenu(menu, with: event, for: contentView)
     }
 
@@ -743,6 +792,7 @@ final class PetController: NSObject {
         animTimer?.invalidate()
         keepFrontTimer?.invalidate()
         microTimer?.invalidate()
+        clickThroughTimer?.invalidate()
         if reportClosed {
             ProtocolIO.shared.write([
                 "protocolVersion": 1,

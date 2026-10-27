@@ -2,6 +2,23 @@
 
 > This is release history. For installation, use the [latest stable release](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest), not commands from older entries.
 
+## 0.1.20 · 2026-10-27
+
+### Fixed
+
+- Stop the transparent parts of the macOS companion window from swallowing
+  clicks meant for the application below. The panel now becomes
+  mouse-transparent whenever the pointer is outside the character and its
+  status card, stays interactive during drags and context menus, and is
+  re-evaluated after moves and resizes. The window also shrinks to the
+  character width/height when the status bubble is hidden instead of reserving
+  a 420 pt card
+  ([#92](https://github.com/QCYTSN/dsh-dafeiyu/issues/92)).
+- Keep the Linux Helper build on a supported GitHub runner while preserving the
+  glibc 2.35 baseline, from ecqn's
+  [#90](https://github.com/QCYTSN/dsh-dafeiyu/pull/90). This is build
+  infrastructure only; the shipped Helper is unchanged.
+
 ## 0.1.19 · 2026-10-26
 
 ### Fixed

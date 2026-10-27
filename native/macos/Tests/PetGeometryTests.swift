@@ -19,4 +19,24 @@ final class PetGeometryTests: XCTestCase {
         let point = CGPoint(x: -90, y: -100)
         XCTAssertEqual(PetGeometry.clamp(point, petSize: CGSize(width: 190, height: 250), screen: screen), point)
     }
+
+    func testOnlyTheCharacterAndCardStayInteractive() {
+        let pet = CGRect(x: 25, y: 150, width: 219, height: 183)
+        let card = CGRect(x: 14, y: 7, width: 364, height: 120)
+
+        XCTAssertTrue(PetGeometry.isInteractive(CGPoint(x: 100, y: 200), pet: pet, bubble: card))
+        XCTAssertTrue(PetGeometry.isInteractive(CGPoint(x: 100, y: 50), pet: pet, bubble: card))
+        // The transparent margin left of the small character must pass through.
+        XCTAssertFalse(PetGeometry.isInteractive(CGPoint(x: 10, y: 200), pet: pet, bubble: card))
+        // The empty gap between the card and the character must pass through too.
+        XCTAssertFalse(PetGeometry.isInteractive(CGPoint(x: 100, y: 135), pet: pet, bubble: card))
+        // Without a visible card only the character remains a hit target.
+        XCTAssertFalse(PetGeometry.isInteractive(CGPoint(x: 100, y: 50), pet: pet, bubble: nil))
+    }
+
+    func testInteractiveEdgeToleratesAFractionalPoint() {
+        let pet = CGRect(x: 10, y: 10, width: 100, height: 100)
+        XCTAssertTrue(PetGeometry.isInteractive(CGPoint(x: 9.5, y: 10), pet: pet, bubble: nil))
+        XCTAssertFalse(PetGeometry.isInteractive(CGPoint(x: 8, y: 10), pet: pet, bubble: nil))
+    }
 }

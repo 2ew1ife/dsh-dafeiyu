@@ -5,6 +5,24 @@
 > [updating guide](UPDATING.md). This record is retained in GitHub and excluded
 > from the installable package.
 
+## 2026-10-27 · macOS click-through / 0.1.20
+
+- Passed 125 JavaScript and 54 Python tests locally on Windows. Added Swift
+  unit tests for `PetGeometry.isInteractive`, covering the character rectangle,
+  the status card, the transparent margins, the gap between card and character,
+  and the no-card case.
+- The macOS window now becomes mouse-transparent from a 30 Hz pointer check and
+  returns to interactive during drags, context menus, and mouse-down. Hidden
+  cards no longer reserve a 420 pt wide window.
+- **Not verified on macOS hardware**: this machine runs Windows, so the actual
+  click-through behaviour and the pointer coordinate conversion are covered
+  only by the Swift geometry tests and the macOS CI build. Issue #92 needs a
+  real-device confirmation.
+- PR #90's Linux Helper CI change passed all four jobs before being merged; it
+  changes only `.github/workflows/ci.yml`, not the shipped Helper.
+- PR #93's CI passed (JavaScript, Python, Swift, packaged Helpers), but the
+  approval-notification issue is still under review; it is not part of 0.1.20.
+
 ## 2026-10-26 · Helper diagnostics and architecture selection / 0.1.19
 
 - Passed 125 JavaScript and 54 Python tests locally on Windows, including new
