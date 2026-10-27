@@ -11,6 +11,19 @@ import UserNotifications
 ///   model, drag/click interactions, right-click menu,
 ///   idle micro-animations and layout persistence.
 /// - Apple official permission handling (UserNotifications + Accessibility).
+
+/// Borderless overlay panel that may live anywhere in the global display space.
+/// AppKit's default `constrainFrameRect` keeps a window inside the screen of the
+/// Space it currently belongs to, which pins the pet to the display edge while
+/// the user drags it toward another display (with "Displays have separate
+/// Spaces"). The pet is a free-floating overlay: its own `moveToPet` clamps it
+/// when the position is restored, so the AppKit constraint only gets in the way.
+final class PetPanel: NSPanel {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+}
+
 final class PetController: NSObject {
     static let labels: [String: String] = [
         "IDLE": "休息中",
@@ -42,6 +55,15 @@ final class PetController: NSObject {
     var balanceSummary = ""
     let eventLogURL: URL?
     let snapshotURL: URL?
+
+    /// Keeps the pet above full-screen apps and on every Space.
+    /// `.canJoinAllSpaces` is dropped only while the user drags: with "Displays
+    /// have separate Spaces" a joined window cannot follow the pointer to
+    /// another display's Space, so the panel visibly sticks at the display edge
+    /// until the drag ends. `.moveToActiveSpace` lets it ride the pointer across
+    /// displays during the drag; `endDrag` restores the pinned behavior.
+    private static let pinnedCollectionBehavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+    private static let draggingCollectionBehavior: NSWindow.CollectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
 
     private var frameData: [String: Data] = [:]
     private let imageCache = NSCache<NSString, NSImage>()
@@ -301,7 +323,7 @@ final class PetController: NSObject {
 
     private func buildWindow() {
         let size = windowSize()
-        let panel = NSPanel(
+        let panel = PetPanel(
             contentRect: NSRect(x: 100, y: 100, width: size.width, height: size.height),
             styleMask: .borderless,
             backing: .buffered,
@@ -311,7 +333,7 @@ final class PetController: NSObject {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.collectionBehavior = Self.pinnedCollectionBehavior
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
         panel.isMovableByWindowBackground = false
@@ -393,7 +415,11 @@ final class PetController: NSObject {
         // Re-assert every 2 s: other apps or full-screen transitions can reset
         // the level/collection behavior, which would hide the pet.
         panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // Do not re-join all Spaces mid-drag; that would yank the panel back to
+        // its starting Space while the pointer is on another display.
+        if !dragging {
+            panel.collectionBehavior = Self.pinnedCollectionBehavior
+        }
         panel.orderFrontRegardless()
     }
 
@@ -456,6 +482,9 @@ final class PetController: NSObject {
     func beginDrag() {
         guard !dragging else { return }
         dragging = true
+        // Let the panel follow the pointer onto another display's Space while the
+        // drag lasts; a `canJoinAllSpaces` panel would stick at the display edge.
+        panel?.collectionBehavior = Self.draggingCollectionBehavior
         // The drag must keep receiving mouseDragged even when the pointer
         // leaves the character rectangle.
         setClickThrough(false)
@@ -501,6 +530,8 @@ final class PetController: NSObject {
         if reducedMotion || !model.playOverlay("dragging_release") { model.clearOverlay() }
         fadeFromFrame = nil
         dragging = false
+        // Back to every Space / above full-screen apps once the pointer is released.
+        panel?.collectionBehavior = Self.pinnedCollectionBehavior
         lastTickMs = now
         startAnimTimer()
         if !reducedMotion {
