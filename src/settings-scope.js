@@ -50,6 +50,16 @@ export function createSettingsScope(ctx, schema, config, normalize) {
   }, { global: true })
   const offVolatile = ctx.on?.('loader/volatile-update', refresh)
   return {
+    namespace,
+    // Diagnostics only: the host's settings service silently refuses writes
+    // when this namespace is absent, so record what it actually exposes.
+    describe() {
+      try {
+        return service?.describe?.() ?? []
+      } catch {
+        return []
+      }
+    },
     get: () => value,
     watch(callback) {
       watchers.add(callback)

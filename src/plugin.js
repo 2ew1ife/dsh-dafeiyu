@@ -6,6 +6,8 @@ import Schema from '@deepseek-ai/schemastery'
 import { CompanionReducer } from './companion-reducer.js'
 import { HelperProcess } from './helper-process.js'
 import { createSettingsScope } from './settings-scope.js'
+import { createHelperLog, defaultHelperLogPath } from './helper-log.js'
+import { createUserSettingsStore, defaultUserSettingsPath } from './user-settings.js'
 import { resolveClientTarget } from './client-target.js'
 import { isLocalRequest, jsonResponse } from './local-http.js'
 import { BALANCE_ENDPOINT, createBalanceQuery, createBalanceMonitor, createBalanceHandler, balanceProviderNamespace } from './balance.js'
@@ -253,9 +255,66 @@ function mount(ctx, config = {}, eventCtx = ctx) {
   }
 }
 
+// The host's settings layer is authoritative while it works. The override
+// store only fills in fields whose settings.update() write failed, so a
+// native menu choice survives a Helper restart on hosts that cannot expose the
+// bundle-patch entry (issue #95). A later host-side change clears that field's
+// fallback again.
+function createEffectiveSettings(host, overrides, logger) {
+  const watchers = new Set()
+  const current = () => overrides.apply(host.get())
+  const announce = () => {
+    const next = current()
+    for (const callback of watchers) {
+      try {
+        callback(next)
+      } catch (error) {
+        logger.warn?.(`dsh-dafeiyu failed to deliver settings: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  }
+  const offHost = host.watch?.(() => announce())
+  return {
+    namespace: host.namespace,
+    describe: host.describe?.bind(host),
+    get: current,
+    watch(callback) {
+      watchers.add(callback)
+      return () => watchers.delete(callback)
+    },
+    ...(typeof host.update === 'function' ? {
+      async update(patch) {
+        await host.update(patch)
+        overrides.clear(Object.keys(patch))
+        announce()
+      },
+    } : {}),
+    refresh: announce,
+    dispose() {
+      offHost?.()
+      watchers.clear()
+      host.dispose?.()
+    },
+  }
+}
+
 function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
   const eventStream = createEventStream()
-  const settings = createSettingsScope(ctx, Config, config, publicConfig)
+  const helperConfig = config.helper ?? {}
+  // `helper.logFile: null` is the explicit test/custom-launch switch used by
+  // HelperProcess; keep the settings diagnostics in the same file.
+  const diagnosticsLog = createHelperLog(
+    helperConfig.logFile === undefined ? defaultHelperLogPath() : helperConfig.logFile,
+  )
+  const hostSettings = createSettingsScope(ctx, Config, config, publicConfig)
+  const overrides = createUserSettingsStore(defaultUserSettingsPath(), {
+    warn(message) {
+      diagnosticsLog.write('WARN', message)
+      logger.warn?.(`dsh-dafeiyu ${message}`)
+    },
+  })
+  const settings = createEffectiveSettings(hostSettings, overrides, logger)
+  let diagnosticsLogged = false
 
   let bridge
   let reducer
@@ -280,7 +339,33 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
     startRuntime(next)
   }
 
+  const hostNamespaceList = () => {
+    try {
+      return (hostSettings.describe?.() ?? []).map((row) => row.ns).join(',')
+    } catch {
+      return ''
+    }
+  }
+
+  const helperEnvironment = (resolved) => ({
+    ...helperConfig.env,
+    DSH_DAFEIYU_SCALE: String(resolved.scale ?? defaults.scale),
+    DSH_DAFEIYU_BUBBLE_SCALE: String(resolved.bubbleScale ?? defaults.bubbleScale),
+    DSH_DAFEIYU_ACTIVITY_LEVEL: String(resolved.activityLevel ?? defaults.activityLevel),
+    DSH_DAFEIYU_REDUCED_MOTION: resolved.reducedMotion === true ? '1' : '0',
+    DSH_DAFEIYU_SOUND_ENABLED: resolved.soundEnabled !== false ? '1' : '0',
+    DSH_DAFEIYU_BUBBLE_MODE: String(resolved.bubbleMode ?? defaults.bubbleMode),
+    DSH_DAFEIYU_BUBBLE_STATES: (Array.isArray(resolved.bubbleStates) ? resolved.bubbleStates : defaults.bubbleStates).join(','),
+    DSH_DAFEIYU_WEBUI_URL: resolveClientTarget({ ...config, ...resolved }).url,
+    DSH_DAFEIYU_OPEN_LABEL: resolveClientTarget({ ...config, ...resolved }).label,
+  })
+
   const applyLiveSettings = (next) => {
+    if (!bridge || !reducer) return
+    // Keep the environment used by a later Helper spawn in sync with the live
+    // config; otherwise a crashed Helper would restart with stale values until
+    // the replayed CONFIG snapshot arrives.
+    bridge.options.env = { ...bridge.options.env, ...helperEnvironment(next) }
     for (const message of reducer.setIncludeSubagents(next.includeSubagents === true)) bridge.send(message)
     bridge.send(createMessage(CompanionMessageKind.CONFIG, {
       scale: next.scale ?? defaults.scale,
@@ -309,21 +394,9 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
       logger.info?.('dsh-dafeiyu is disabled')
       return
     }
-    const helperConfig = config.helper ?? {}
     bridge = new HelperProcess({
       ...helperConfig,
-      env: {
-        ...helperConfig.env,
-        DSH_DAFEIYU_SCALE: String(resolved.scale ?? defaults.scale),
-        DSH_DAFEIYU_BUBBLE_SCALE: String(resolved.bubbleScale ?? defaults.bubbleScale),
-        DSH_DAFEIYU_ACTIVITY_LEVEL: String(resolved.activityLevel ?? defaults.activityLevel),
-        DSH_DAFEIYU_REDUCED_MOTION: resolved.reducedMotion === true ? '1' : '0',
-        DSH_DAFEIYU_SOUND_ENABLED: resolved.soundEnabled !== false ? '1' : '0',
-        DSH_DAFEIYU_BUBBLE_MODE: String(resolved.bubbleMode ?? defaults.bubbleMode),
-        DSH_DAFEIYU_BUBBLE_STATES: (Array.isArray(resolved.bubbleStates) ? resolved.bubbleStates : defaults.bubbleStates).join(','),
-        DSH_DAFEIYU_WEBUI_URL: resolveClientTarget({ ...config, ...resolved }).url,
-        DSH_DAFEIYU_OPEN_LABEL: resolveClientTarget({ ...config, ...resolved }).label,
-      },
+      env: helperEnvironment(resolved),
       onSettingsChange: (report) => {
         if (typeof settings.update !== 'function') return
         const patch = {}
@@ -331,8 +404,28 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
         if (Number.isFinite(report.bubbleScale)) patch.bubbleScale = Math.min(1.2, Math.max(0.8, report.bubbleScale))
         if (typeof report.reducedMotion === 'boolean') patch.reducedMotion = report.reducedMotion
         if (Object.keys(patch).length === 0) return
-        void Promise.resolve(settings.update(patch)).catch((error) => {
-          logger.warn?.(`dsh-dafeiyu failed to persist helper settings: ${error instanceof Error ? error.message : String(error)}`)
+        // Capture the host values before the write: the fallback only applies
+        // while the host still holds the same baseline.
+        const hostBefore = hostSettings.get()
+        // Record before the write: DSH can resolve settings.update() without
+        // the profile patch actually reaching disk. The store keeps the menu
+        // value while the host holds either the old baseline or that value, and
+        // a later host-side change (a third value) clears it.
+        overrides.record(patch, hostBefore)
+        void Promise.resolve(hostSettings.update(patch)).then(() => {
+          diagnosticsLog.write('INFO', `persisted native menu settings: ${JSON.stringify(patch)}; fallback retained: ${JSON.stringify(overrides.snapshot())}`)
+        }).catch((error) => {
+          const detail = error instanceof Error ? error.message : String(error)
+          diagnosticsLog.write(
+            'ERROR',
+            `settings.update failed for namespace "${hostSettings.namespace ?? 'dsh-dafeiyu'}": ${detail}; host namespaces: ${hostNamespaceList() || '(none)'}; kept native menu values: ${JSON.stringify(overrides.snapshot())}`,
+          )
+          logger.warn?.(`dsh-dafeiyu failed to persist helper settings: ${detail}`)
+        }).finally(() => {
+          // The Helper already applied the menu choice locally. Re-sending the
+          // effective CONFIG keeps that choice in the replay snapshot if the
+          // process restarts, and updates the environment for a later spawn.
+          if (bridge) applyLiveSettings(settings.get())
         })
       },
     }, logger)
@@ -344,6 +437,13 @@ function mountCompanion(ctx, config = {}, eventCtx = ctx, logger) {
       eventStream.broadcast(message)
     }
     reducer = new CompanionReducer({ includeSubagents: resolved.includeSubagents === true })
+    if (!diagnosticsLogged) {
+      diagnosticsLogged = true
+      diagnosticsLog.write(
+        'INFO',
+        `settings persistence (activation): namespace="${hostSettings.namespace ?? 'dsh-dafeiyu'}"; update=${typeof hostSettings.update === 'function'}; host namespaces: ${hostNamespaceList() || '(none)'}; native-menu fallback: ${JSON.stringify(overrides.snapshot())}`,
+      )
+    }
     bridge.start()
     bridge.send(createMessage(CompanionMessageKind.HELLO, {
       state: CompanionState.IDLE,

@@ -2,6 +2,12 @@
 
 > 此文件记录 issue / PR 的处理依据，不是安装指南。旧版本号用于追溯；安装请使用[当前稳定版](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)。本记录不随安装包分发。
 
+## 2026-10-27 修复（0.1.21）
+
+- [#94 macOS 跨显示器拖动](https://github.com/QCYTSN/dsh-dafeiyu/issues/94)：合并 [#96](https://github.com/QCYTSN/dsh-dafeiyu/pull/96)。`PetPanel` 覆写 `constrainFrameRect`，拖动期间使用 `moveToActiveSpace + fullScreenAuxiliary`，松手恢复 `canJoinAllSpaces / stationary`；`keepFront` 拖动期间不再重设 collectionBehavior。PR 四组 CI 全绿后合并，作者已在本机双向跨屏验证；普通桌面与全屏 Space 的跨屏行为仍待更多实机反馈。
+- [#95 右键菜单设置重启回退](https://github.com/QCYTSN/dsh-dafeiyu/issues/95)：新增 host 侧兜底 `$DSH_HOME/dsh-dafeiyu/user-settings.json`。`settings.update` 失败时记录菜单值与 host 基线；Helper / DSH 重启后只要 host 仍是旧值就沿用菜单选择，host 侧之后改变则自动清除兜底。重放的 CONFIG 与下一次 Helper spawn 的环境同步使用生效值。失败原因、请求的 namespace 和 host 实际暴露的 namespace 写入 Helper 诊断日志。**根因（DSH 拒绝写入的具体环节）尚未定位**，issue 保持打开等报告者的 0.1.21 日志。
+- 本地用 DSH 0.2.1-rc.3 + 临时 `DSH_HOME` 的 web profile 复测了 `PATCH /plugins/dsh-dafeiyu/config`：Windows 上写入成功并更新 `cordis.patch.yml`，说明该 host 版本的 settings 服务本身可写；macOS 侧的失败仍需日志确认。
+
 ## 2026-10-27 修复（0.1.20）
 
 - [#92 macOS 透明区吞点击](https://github.com/QCYTSN/dsh-dafeiyu/issues/92)：`PetController` 现在用 30 Hz 指针采样切换 `panel.ignoresMouseEvents`，角色与气泡以外区域把点击交给下层应用；拖动、右键菜单和鼠标按下期间保持可交互。气泡 `hidden` 时 `windowSize()` 收窄到角色尺寸（不再恒定预留 420pt 卡片）。命中判定抽到 `PetGeometry.isInteractive` 并有 Swift 单测。**未在 macOS 实机验证穿透效果**，需要 #92 报告者复测。

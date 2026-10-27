@@ -5,6 +5,25 @@
 > [updating guide](UPDATING.md). This record is retained in GitHub and excluded
 > from the installable package.
 
+## 2026-10-27 · Cross-display drag and settings fallback / 0.1.21
+
+- Passed 132 JavaScript and 54 Python tests locally on Windows. New coverage:
+  the native-menu override store (baseline matching, host-side change wins,
+  persistence, malformed files), the plugin replaying an effective `CONFIG`
+  after a failed `settings.update`, and the fallback file contents.
+- Reproduced the settings write path on the installed DSH 0.2.1-rc.3 runtime
+  with a throwaway `DSH_HOME` and `web` profile: `PATCH
+  /plugins/dsh-dafeiyu/config` returned 200 and rewrote the profile
+  `cordis.patch.yml` on Windows. The macOS-specific rejection from issue #95 is
+  therefore not reproducible here; the new diagnostic log and host-side
+  fallback cover it until a report arrives.
+- Merged PR #96 after all four CI jobs passed. Its author verified two-way
+  cross-display dragging with `CGWindowListCopyWindowInfo` on macOS; this
+  Windows machine cannot reproduce that desktop behavior.
+- Not verified on macOS hardware: the click-through pointer conversion from
+  0.1.20 (#92) and the cross-display drag from #96 still need reporter
+  confirmation.
+
 ## 2026-10-27 · macOS click-through / 0.1.20
 
 - Passed 125 JavaScript and 54 Python tests locally on Windows. Added Swift

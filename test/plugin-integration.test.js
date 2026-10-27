@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
-import test from 'node:test'
+import test, { after } from 'node:test'
 import { apply, inject } from '../src/index.js'
+
+// Native-menu fallback files must never land in the developer's real profile
+// while the integration suite exercises the plugin.
+const testFallbackFile = join(tmpdir(), `dsh-dafeiyu-user-settings-${process.pid}.json`)
+process.env.DSH_DAFEIYU_USER_SETTINGS = testFallbackFile
+after(() => rm(testFallbackFile, { force: true }).catch(() => {}))
 
 test('plugin declares the service dependencies it actually consumes', () => {
   assert.ok(inject.includes('settings'), 'settings is a real hard dependency for live config')
@@ -223,6 +230,8 @@ test('helper context-menu changes persist through the DSH settings service', asy
       args: [fixture],
       headless: false,
       heartbeatMs: 0,
+      logFile: null,
+      tempDirectory: null,
     },
   })
   await waitFor(() => persisted !== undefined)
@@ -235,4 +244,82 @@ test('helper context-menu changes persist through the DSH settings service', asy
   assert.equal(settingsValue.bubbleScale, 0.9)
   assert.equal(settingsValue.reducedMotion, true)
   dispose()
+})
+
+test('a failed settings write keeps the native menu choice in the fallback and replay snapshot', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'dsh-dafeiyu-settings-fallback-'))
+  const eventLog = join(directory, 'events.jsonl')
+  const fallbackFile = join(directory, 'user-settings.json')
+  const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'settings-log-helper.js')
+  const previousFallback = process.env.DSH_DAFEIYU_USER_SETTINGS
+  process.env.DSH_DAFEIYU_USER_SETTINGS = fallbackFile
+
+  const listeners = new Map()
+  let dispose
+  let settingsListener
+  const warnings = []
+  let settingsValue = {
+    enabled: true,
+    scale: 1,
+    bubbleScale: 1,
+    activityLevel: 'normal',
+    reducedMotion: false,
+    soundEnabled: true,
+    bubbleMode: 'always',
+    bubbleStates: ['SUCCESS', 'ERROR', 'WAITING'],
+    includeSubagents: false,
+  }
+  const settings = {
+    get: () => ({ ...settingsValue }),
+    watch(callback) {
+      settingsListener = callback
+      return () => { settingsListener = undefined }
+    },
+    async update() {
+      throw new Error('No configurable plugin entry "dsh-dafeiyu"')
+    },
+  }
+  const ctx = {
+    settings: { register: () => settings },
+    logger: { debug() {}, info() {}, warn(message) { warnings.push(message) }, error() {} },
+    on(name, callback) {
+      listeners.set(name, callback)
+    },
+    effect(setup) {
+      dispose = setup()
+    },
+  }
+
+  try {
+    apply(ctx, {
+      helper: {
+        command: process.execPath,
+        args: [fixture, eventLog],
+        headless: false,
+        heartbeatMs: 0,
+        logFile: null,
+        tempDirectory: null,
+      },
+    })
+
+    await waitFor(() => existsSync(fallbackFile))
+    await waitFor(async () => eventLogHasKind(eventLog, 'config'))
+
+    const messages = (await readFile(eventLog, 'utf8')).trim().split(/\r?\n/).map(JSON.parse)
+    const config = messages.find((message) => message.kind === 'config')
+    assert.equal(config.scale, 0.6)
+    assert.equal(config.bubbleScale, 0.9)
+    assert.equal(config.reducedMotion, true)
+    assert.ok(warnings.some((message) => String(message).includes('failed to persist helper settings')))
+
+    const fallback = JSON.parse(await readFile(fallbackFile, 'utf8'))
+    assert.deepEqual(fallback.overrides.scale, { value: 0.6, host: 1 })
+    assert.deepEqual(fallback.overrides.bubbleScale, { value: 0.9, host: 1 })
+    assert.deepEqual(fallback.overrides.reducedMotion, { value: true, host: false })
+  } finally {
+    dispose?.()
+    if (previousFallback === undefined) delete process.env.DSH_DAFEIYU_USER_SETTINGS
+    else process.env.DSH_DAFEIYU_USER_SETTINGS = previousFallback
+    await rm(directory, { recursive: true, force: true })
+  }
 })

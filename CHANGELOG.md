@@ -2,6 +2,28 @@
 
 > This is release history. For installation, use the [latest stable release](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest), not commands from older entries.
 
+## 0.1.21 · 2026-10-27
+
+### Fixed
+
+- Let the macOS companion be dragged across displays when "Displays have
+  separate Spaces" is enabled. The overlay panel is no longer constrained to
+  the screen of its current Space during a drag, then returns to every-Space /
+  full-screen behavior on release, from Samunroyu's
+  [#96](https://github.com/QCYTSN/dsh-dafeiyu/pull/96) for
+  [#94](https://github.com/QCYTSN/dsh-dafeiyu/issues/94).
+- Keep the native context-menu size, bubble-size and reduced-motion choices
+  across Helper and DSH restarts when DSH's settings service rejects the write.
+  The effective values and the host baseline are stored in
+  `$DSH_HOME/dsh-dafeiyu/user-settings.json`; the fallback only applies while
+  the host keeps its old value, so a later host-side change wins. Replayed
+  `CONFIG` messages and the next Helper spawn use the effective values
+  ([#95](https://github.com/QCYTSN/dsh-dafeiyu/issues/95)).
+- Write settings-persistence failures to the Helper diagnostic log with the
+  requested namespace and the namespaces the host actually exposes, instead of
+  a warning that never reaches the Desktop user. The settings-page write is
+  still reported to the caller when DSH rejects it.
+
 ## 0.1.20 · 2026-10-27
 
 ### Fixed
