@@ -984,20 +984,7 @@ final class PetController: NSObject {
 
     private func drawStatusCard(rect: NSRect, card: (title: String, detail: String, state: String)) {
         let s = bubbleScale
-        let corner: CGFloat = 16 * s
-        let shadow1 = NSRect(x: rect.minX + 1, y: rect.minY + 6, width: rect.width - 2, height: rect.height)
-        let shadow2 = NSRect(x: rect.minX, y: rect.minY + 3, width: rect.width, height: rect.height)
-        NSColor(calibratedWhite: 0.05, alpha: 0.05).setFill()
-        NSBezierPath(roundedRect: shadow1, xRadius: corner, yRadius: corner).fill()
-        NSColor(calibratedWhite: 0.08, alpha: 0.08).setFill()
-        NSBezierPath(roundedRect: shadow2, xRadius: corner, yRadius: corner).fill()
-
-        let cardPath = NSBezierPath(roundedRect: rect, xRadius: corner, yRadius: corner)
-        NSColor(calibratedRed: 0.988, green: 0.988, blue: 0.992, alpha: 0.97).setFill()
-        cardPath.fill()
-        NSColor(calibratedWhite: 0.85, alpha: 0.8).setStroke()
-        cardPath.lineWidth = 1
-        cardPath.stroke()
+        drawCardSurface(rect: rect, state: card.state)
 
         let iconCenter = NSPoint(x: rect.maxX - 34 * s, y: rect.minY + 42 * s)
         drawStatusIcon(center: iconCenter, state: card.state, scale: s)
@@ -1010,17 +997,99 @@ final class PetController: NSObject {
         let fontScale = min(1.2, max(1.0, s))
         let titleFont = NSFont.systemFont(ofSize: max(8.0, 11.0 * fontScale), weight: .semibold)
         let detailFont = NSFont.systemFont(ofSize: max(7.0, 9.0 * fontScale))
+        drawStatusPill(
+            state: card.state,
+            in: NSRect(x: textX, y: rect.minY + 11 * s, width: 88 * s, height: 15 * s),
+            scale: s
+        )
         drawText(
             card.title,
-            in: NSRect(x: textX, y: rect.minY + 15 * s, width: textWidth, height: max(12, 27 * s)),
+            in: NSRect(x: textX, y: rect.minY + 31 * s, width: textWidth, height: max(12, 23 * s)),
             font: titleFont,
             color: Self.hex("#25282D")
         )
         drawText(
             card.detail,
-            in: NSRect(x: textX, y: rect.minY + 43 * s, width: textWidth, height: max(12, 24 * s)),
+            in: NSRect(x: textX, y: rect.minY + 55 * s, width: textWidth, height: max(12, 19 * s)),
             font: detailFont,
             color: Self.hex("#747981")
+        )
+    }
+
+    /// Gives the companion card a native macOS material feel without relying on
+    /// a system visual-effect view (which is unreliable in transparent panels).
+    /// State colour is deliberately subtle: it conveys activity at a glance
+    /// while leaving the character artwork as the visual focus.
+    private func drawCardSurface(rect: NSRect, state: String) {
+        let s = bubbleScale
+        let corner: CGFloat = 16 * s
+        let (accentBackground, accentForeground) = Self.statusColors[state] ?? ("#ECEEF1", "#747A84")
+        let accent = Self.hex(accentForeground)
+
+        NSGraphicsContext.saveGraphicsState()
+        if let context = NSGraphicsContext.current?.cgContext {
+            context.setShadow(
+                offset: CGSize(width: 0, height: 5 * s),
+                blur: 15 * s,
+                color: NSColor.black.withAlphaComponent(0.17).cgColor
+            )
+        }
+        let cardPath = NSBezierPath(roundedRect: rect, xRadius: corner, yRadius: corner)
+        NSColor(calibratedRed: 0.985, green: 0.988, blue: 0.996, alpha: 0.985).setFill()
+        cardPath.fill()
+        NSGraphicsContext.restoreGraphicsState()
+
+        // A restrained vertical tint makes SUCCESS / ERROR / WORKING readable
+        // even when the card text is truncated.
+        let tint = Self.hex(accentBackground).withAlphaComponent(0.42)
+        let gradient = NSGradient(
+            starting: tint,
+            ending: NSColor.white.withAlphaComponent(0.03)
+        )
+        gradient?.draw(in: cardPath, angle: 90)
+
+        let accentPath = NSBezierPath(
+            roundedRect: NSRect(x: rect.minX + 11 * s, y: rect.minY + 6 * s,
+                                width: max(18 * s, rect.width - 22 * s), height: 3 * s),
+            xRadius: 1.5 * s,
+            yRadius: 1.5 * s
+        )
+        accent.withAlphaComponent(0.75).setFill()
+        accentPath.fill()
+
+        NSColor.white.withAlphaComponent(0.85).setStroke()
+        cardPath.lineWidth = 1
+        cardPath.stroke()
+
+        // The small tail visually attaches the floating status to the pet.
+        let petCenter = petRect().midX
+        let tailCenter = min(max(petCenter, rect.minX + 26 * s), rect.maxX - 26 * s)
+        let tail = NSBezierPath()
+        tail.move(to: NSPoint(x: tailCenter - 9 * s, y: rect.maxY - 1 * s))
+        tail.line(to: NSPoint(x: tailCenter + 9 * s, y: rect.maxY - 1 * s))
+        tail.line(to: NSPoint(x: tailCenter, y: rect.maxY + 11 * s))
+        tail.close()
+        tint.withAlphaComponent(0.92).setFill()
+        tail.fill()
+    }
+
+    private func drawStatusPill(state: String, in rect: NSRect, scale s: CGFloat) {
+        let (backgroundHex, foregroundHex) = Self.statusColors[state] ?? ("#ECEEF1", "#747A84")
+        let background = Self.hex(backgroundHex)
+        let pillPath = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        background.withAlphaComponent(0.95).setFill()
+        pillPath.fill()
+        let phase = CGFloat((sin(CACurrentMediaTime() * 4.0) + 1) / 2)
+        let dotAlpha: CGFloat = (state == "THINKING" || state == "WORKING") ? 0.55 + phase * 0.45 : 1
+        Self.hex(foregroundHex).withAlphaComponent(dotAlpha).setFill()
+        NSBezierPath(ovalIn: NSRect(x: rect.minX + 6 * s, y: rect.midY - 2.5 * s,
+                                    width: 5 * s, height: 5 * s)).fill()
+        drawText(
+            Self.labels[state] ?? state,
+            in: NSRect(x: rect.minX + 15 * s, y: rect.minY + 2 * s,
+                       width: rect.width - 19 * s, height: rect.height - 3 * s),
+            font: NSFont.systemFont(ofSize: max(7, 8 * max(1, min(1.2, s))), weight: .medium),
+            color: Self.hex(foregroundHex)
         )
     }
 
@@ -1054,10 +1123,11 @@ final class PetController: NSObject {
             foreground.setFill()
             NSBezierPath(ovalIn: NSRect(x: center.x - 2 * s, y: center.y + 9 * s, width: 4 * s, height: 4 * s)).fill()
         case "THINKING", "WORKING":
-            foreground.setFill()
-            for offset in [-9.0, 0.0, 9.0] {
+            for (index, offset) in [-9.0, 0.0, 9.0].enumerated() {
+                let phase = CGFloat((sin(CACurrentMediaTime() * 6.0 + Double(index) * 1.25) + 1) / 2)
+                foreground.withAlphaComponent(0.45 + phase * 0.55).setFill()
                 NSBezierPath(ovalIn: NSRect(x: center.x + CGFloat(offset) * s - 3 * s,
-                                            y: center.y - 3 * s,
+                                            y: center.y - (3 + phase * 2) * s,
                                             width: 6 * s,
                                             height: 6 * s)).fill()
             }
@@ -1069,16 +1139,11 @@ final class PetController: NSObject {
 
     private func drawTaskCard(rect: NSRect) {
         let s = bubbleScale
-        let corner: CGFloat = 16 * s
-        NSColor(calibratedWhite: 0.05, alpha: 0.05).setFill()
-        NSBezierPath(roundedRect: NSRect(x: rect.minX + 1, y: rect.minY + 6, width: rect.width - 2, height: rect.height),
-                     xRadius: corner, yRadius: corner).fill()
-        let cardPath = NSBezierPath(roundedRect: rect, xRadius: corner, yRadius: corner)
-        NSColor(calibratedRed: 0.988, green: 0.988, blue: 0.992, alpha: 0.97).setFill()
-        cardPath.fill()
-        NSColor(calibratedWhite: 0.85, alpha: 0.8).setStroke()
-        cardPath.lineWidth = 1
-        cardPath.stroke()
+        let activeStates = tasks.compactMap { Self.stringValue($0["state"]) }
+        let primaryState = activeStates.first(where: { $0 == "WORKING" || $0 == "THINKING" })
+            ?? activeStates.first
+            ?? "WORKING"
+        drawCardSurface(rect: rect, state: primaryState)
 
         let textX = rect.minX + 16 * s
         let textWidth = max(40, rect.width - 32 * s)
@@ -1088,9 +1153,15 @@ final class PetController: NSObject {
         let fontScale = min(1.2, max(1.0, s))
         let titleFont = NSFont.systemFont(ofSize: max(8.0, 11.0 * fontScale), weight: .semibold)
         let detailFont = NSFont.systemFont(ofSize: max(7.0, 9.0 * fontScale))
+        drawStatusPill(
+            state: primaryState,
+            in: NSRect(x: textX, y: rect.minY + 10 * s, width: 88 * s, height: 15 * s),
+            scale: s
+        )
         drawText(
             "\(tasks.count) 个任务进行中",
-            in: NSRect(x: textX, y: rect.minY + 10 * s, width: textWidth, height: max(12, 22 * s)),
+            in: NSRect(x: textX + 96 * s, y: rect.minY + 10 * s,
+                       width: max(30, textWidth - 96 * s), height: max(12, 22 * s)),
             font: titleFont,
             color: Self.hex("#25282D")
         )
