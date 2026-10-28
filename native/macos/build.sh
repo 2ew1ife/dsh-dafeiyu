@@ -3,7 +3,10 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../.." && pwd)"
-APP="$ROOT/runtime/bin/darwin/dsh-dafeiyu-helper.app"
+# A cloud-synced workspace can add Finder metadata to generated bundles.  Let
+# local builders stage the app in a normal temporary directory while keeping
+# the package default unchanged.
+APP="${DSH_DAFEIYU_DARWIN_APP:-$ROOT/runtime/bin/darwin/dsh-dafeiyu-helper.app}"
 BIN="$APP/Contents/MacOS/dsh-dafeiyu-helper"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -42,6 +45,10 @@ swiftc -O -swift-version 5 -target x86_64-apple-macosx12.0 \
 
 lipo -create "$WORK/helper-arm64" "$WORK/helper-x86_64" -output "$BIN"
 chmod 0755 "$BIN"
+# Copying an app bundle on macOS can preserve Finder/resource-fork metadata.
+# Ad-hoc signing rejects those attributes, so clear them before signing the
+# generated artifact (not the source assets).
+xattr -cr "$APP"
 codesign --force --deep --sign - --timestamp=none "$APP"
 lipo "$BIN" -verify_arch arm64 x86_64
 plutil -lint "$APP/Contents/Info.plist"
