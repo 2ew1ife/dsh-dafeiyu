@@ -10,7 +10,13 @@
 
 </div>
 
-> **Fork 说明：** 本仓库 fork 自 [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu)。项目主体、功能设计与后续稳定版均归原作者及贡献者；本分支仅维护 macOS 状态卡视觉与本机构建细节的小幅优化。
+> **Fork 说明：** 本仓库 fork 自 [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu)。项目主体、功能设计与稳定版归原作者及贡献者；本分支只增加 macOS 外观、可选自定义皮肤和本机构建细节。附带的启动主题改编自 [KylinQ01/dsh-startup-animation](https://github.com/KylinQ01/dsh-startup-animation)，保留其署名与 MIT 许可。
+
+### 本分支的狂三外观
+
+可选的狂三皮肤包含待机、思考、翻书、开心招手和拖动反应；动作使用姿态混合、持续轻摆和松手回弹，属于轻量桌宠动画。原版大肥鱼及其动画实现仍完整保留。
+
+查看 [皮肤素材与设置](extras/kurumi-skin/README.md) 和 [页面壁纸与启动主题](extras/kurumi-startup/README.md)。这些是个人源码扩展，下面上游 npm 稳定版的安装命令不包含本分支扩展。角色图是本次生成的同人素材，并非官方角色素材。
 
 大肥鱼由 DSH 插件启动，随 DSH 一起退出。透明、无边框、始终置顶的原生窗口，让你在编辑器、浏览器或其他应用中也能看到 Agent 的工作状态。
 

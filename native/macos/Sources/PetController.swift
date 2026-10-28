@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import QuartzCore
 import UserNotifications
 
@@ -72,6 +73,54 @@ final class PetController: NSObject {
     private static let decodedFrameCache = 24
     private var maxFrameWidth: CGFloat = 238
     private var maxFrameHeight: CGFloat = 260
+    /// Optional local poses use lightweight native motion. Once an idle image
+    /// is loaded, missing poses always fall back to that image.
+    private var customSkinImage: NSImage?
+    private var customStateImages: [String: NSImage] = [:]
+    private var customInteractionImage: NSImage?
+    private var customDraggingImage: NSImage?
+    private var customBlinkImage: NSImage?
+    private var customSkinName = "自定义桌宠"
+    private var customSkinShownAt: CFTimeInterval = 0
+    private var customInteractionAt: CFTimeInterval = 0
+    private var customPoseMixer = SkinPoseMixer()
+    private var customDragSpring = DampedSkinSpring(frequency: 2.8, dampingRatio: 0.66)
+    private var customTouchSpring = DampedSkinSpring(frequency: 3.6, dampingRatio: 0.62)
+    private var customTextures: [ObjectIdentifier: CIImage] = [:]
+    private var customBlinkMask: CIImage?
+    private let customRenderContext = CIContext(options: [.cacheIntermediates: false])
+    private lazy var customSoftwareContext = CIContext(options: [.useSoftwareRenderer: true, .cacheIntermediates: false])
+    private var customRenderFallbackLogged = false
+    private static let customWarp = CIWarpKernel(source: """
+        kernel vec2 companionMotion(float time, float width, float height, float drag, float touch, float greeting, float reading) {
+            vec2 p = destCoord();
+            vec2 uv = p / vec2(width, height);
+            float unit = width / 412.0;
+            float hairY = smoothstep(0.10, 0.26, uv.y) * (1.0 - smoothstep(0.70, 0.86, uv.y));
+            float left = (1.0 - smoothstep(0.25, 0.40, uv.x)) * hairY;
+            float right = smoothstep(0.60, 0.75, uv.x) * hairY;
+            float head = (1.0 - smoothstep(0.12, 0.25, abs(uv.x - 0.5)))
+                * smoothstep(0.39, 0.58, uv.y) * (1.0 - smoothstep(0.83, 0.96, uv.y));
+            float body = (1.0 - smoothstep(0.13, 0.29, abs(uv.x - 0.5)))
+                * smoothstep(0.12, 0.26, uv.y) * (1.0 - smoothstep(0.42, 0.55, uv.y));
+            float amplitude = 3.6 + drag * 4.2 + touch * 2.0;
+            float dx = left * sin(time * 1.50 + uv.y * 3.0) * amplitude
+                + right * sin(time * 1.37 + uv.y * 3.3 + 1.25) * amplitude * 0.87
+                + head * sin(time * 0.91) * 2.2 - body * sin(time * 0.91 + 0.2) * 0.9;
+            float dy = left * sin(time * 1.23 + uv.y * 2.0 + 0.6) * 0.9
+                + right * sin(time * 1.31 + uv.y * 2.6 + 1.8) * 0.85
+                + head * sin(time * 1.7) * 0.85 + body * sin(time * 1.7) * 0.45;
+            float hand = 1.0 - smoothstep(0.55, 1.0, length((uv - vec2(0.345, 0.47)) / vec2(0.074, 0.096)));
+            vec2 elbow = vec2(width * 0.397, height * 0.408);
+            vec2 arm = p - elbow;
+            float wave = sin(time * 6.0) * 0.14 * greeting * hand;
+            vec2 handMotion = vec2(-arm.y, arm.x) * wave;
+            float book = (1.0 - smoothstep(0.11, 0.20, abs(uv.x - 0.5)))
+                * smoothstep(0.24, 0.31, uv.y) * (1.0 - smoothstep(0.42, 0.48, uv.y));
+            dy += reading * book * sin(time * 3.2 + 0.6) * 0.9;
+            return p - vec2(dx, dy) * unit - handMotion;
+        }
+        """)
 
     private(set) var panel: NSPanel?
     private(set) var contentView: PetView?
@@ -165,6 +214,7 @@ final class PetController: NSObject {
 
         if let mfw = manifest["maxFrameWidth"] as? Int { maxFrameWidth = CGFloat(mfw) }
         if let mfh = manifest["maxFrameHeight"] as? Int { maxFrameHeight = CGFloat(mfh) }
+        loadCustomSkin(environment: env)
         loadFrames()
         if !isHeadless() {
             buildWindow()
@@ -185,7 +235,89 @@ final class PetController: NSObject {
 
     // MARK: - Frames & geometry
 
+    private func loadCustomSkin(environment: [String: String]) {
+        let selectionURL = layoutURL.deletingLastPathComponent().appendingPathComponent("skin.json")
+        let selection: [String: Any]
+        if let data = try? Data(contentsOf: selectionURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            selection = json
+        } else {
+            selection = [:]
+        }
+        guard let image = loadSkinImage(at: environment["DSH_DAFEIYU_SKIN_IMAGE"] ?? selection["imagePath"] as? String) else { return }
+        customSkinImage = image
+        if let states = selection["states"] as? [String: String] {
+            for (state, path) in states where Self.labels[state] != nil {
+                customStateImages[state] = loadSkinImage(at: path)
+            }
+        }
+        customInteractionImage = loadSkinImage(at: selection["interactionImagePath"] as? String)
+        customDraggingImage = loadSkinImage(at: selection["draggingImagePath"] as? String)
+        customBlinkImage = loadSkinImage(at: selection["blinkImagePath"] as? String)
+        if let name = environment["DSH_DAFEIYU_SKIN_NAME"] ?? selection["name"] as? String,
+           !name.isEmpty {
+            customSkinName = String(name.prefix(40))
+        }
+        FileHandle.standardError.write(Data("Loaded local companion skin: \(customStateImages.count) state poses, interaction=\(customInteractionImage != nil), dragging=\(customDraggingImage != nil), blink=\(customBlinkImage != nil), internalWarp=\(Self.customWarp != nil), normalized alpha bounds, continuous 60 Hz native motion\n".utf8))
+    }
+
+    private func loadSkinImage(at path: String?) -> NSImage? {
+        guard let path = path, path.hasPrefix("/"),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let fileSize = attributes[.size] as? NSNumber,
+              fileSize.intValue > 0, fileSize.intValue <= 16 * 1024 * 1024,
+              let image = NSImage(contentsOfFile: path), image.isValid,
+              image.size.width > 0, image.size.height > 0 else { return nil }
+        guard let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              source.width <= 8192, source.height <= 8192,
+              source.width * source.height <= 24_000_000 else { return nil }
+        let width = source.width
+        let height = source.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let alphaBounds: CGRect? = pixels.withUnsafeMutableBytes { bytes in
+            let rgba = bytes.bindMemory(to: UInt8.self)
+            guard let context = CGContext(data: bytes.baseAddress, width: width, height: height,
+                                          bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return nil }
+            context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+            var minX = width, minY = height, maxX = -1, maxY = -1
+            for y in 0..<height {
+                for x in 0..<width where rgba[(y * width + x) * 4 + 3] >= 24 {
+                    minX = min(minX, x); minY = min(minY, y)
+                    maxX = max(maxX, x); maxY = max(maxY, y)
+                }
+            }
+            guard maxX >= minX, maxY >= minY else { return nil }
+            // Keep two source pixels beyond the threshold to retain soft edges.
+            return CGRect(x: max(0, minX - 2), y: max(0, minY - 2),
+                          width: min(width - 1, maxX + 2) - max(0, minX - 2) + 1,
+                          height: min(height - 1, maxY + 2) - max(0, minY - 2) + 1)
+        }
+        guard let bounds = alphaBounds, let cropped = source.cropping(to: bounds) else { return nil }
+        // Normalize actual visible content, rather than each file's padding.
+        // Every pose has the same visual height and foot baseline at 96%.
+        let canvas = CGSize(width: maxFrameWidth, height: maxFrameHeight)
+        let rasterScale: CGFloat = 2
+        guard let normalized = CGContext(data: nil, width: Int(canvas.width * rasterScale),
+                                          height: Int(canvas.height * rasterScale), bitsPerComponent: 8,
+                                          bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        normalized.scaleBy(x: rasterScale, y: rasterScale)
+        normalized.interpolationQuality = .high
+        let fit = min(canvas.height * 0.77 / bounds.height, canvas.width * 0.78 / bounds.width)
+        let visual = CGSize(width: bounds.width * fit, height: bounds.height * fit)
+        normalized.draw(cropped, in: CGRect(x: (canvas.width - visual.width) / 2,
+                                            y: canvas.height * 0.04,
+                                            width: visual.width, height: visual.height))
+        guard let raster = normalized.makeImage() else { return nil }
+        let result = NSImage(cgImage: raster, size: canvas)
+        customTextures[ObjectIdentifier(result)] = CIImage(cgImage: raster)
+        return result
+    }
+
     private func loadFrames() {
+        guard customSkinImage == nil else { return }
         for clip in model.clips.values {
             for frame in clip.frames where frameData[frame] == nil {
                 frameData[frame] = try? Data(contentsOf: assetRoot.appendingPathComponent(frame))
@@ -197,6 +329,7 @@ final class PetController: NSObject {
     private var decodedFrameBytes: Int { Int(maxFrameWidth * maxFrameHeight * 4) }
 
     private func frameImage(for frame: String) -> NSImage? {
+        if let image = customSkinImage { return image }
         let key = frame as NSString
         if let cached = imageCache.object(forKey: key) { return cached }
         guard let data = frameData[frame], let image = NSImage(data: data) else { return nil }
@@ -337,7 +470,7 @@ final class PetController: NSObject {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
         panel.isMovableByWindowBackground = false
-        panel.title = "DSH 大肥鱼"
+        panel.title = customSkinImage == nil ? "DSH 大肥鱼" : "DSH \(customSkinName)"
 
         let view = PetView(frame: NSRect(x: 0, y: 0, width: size.width, height: size.height))
         view.controller = self
@@ -348,6 +481,9 @@ final class PetController: NSObject {
 
     func show() {
         guard !isHeadless() else { return }
+        customSkinShownAt = CACurrentMediaTime()
+        customDragSpring = DampedSkinSpring(time: customSkinShownAt, frequency: 2.8, dampingRatio: 0.66)
+        customTouchSpring = DampedSkinSpring(time: customSkinShownAt, frequency: 3.6, dampingRatio: 0.62)
         panel?.orderFrontRegardless()
         keepFront()
         updateClickThrough()
@@ -361,6 +497,7 @@ final class PetController: NSObject {
 
     private var animationInterval: TimeInterval {
         if reducedMotion { return 0.04 }
+        if customSkinImage != nil { return 1.0 / 60.0 }
         // Sub-frame poll: a once-per-frame timer turns one early delivery into a whole-frame hitch.
         return min(0.02, max(0.008, Double(model.activeClip.frameMs) / 3000))
     }
@@ -465,6 +602,7 @@ final class PetController: NSObject {
     }
 
     private func syncFrameTransition(previousFrame: String, previousClip: String) {
+        guard customSkinImage == nil else { return }
         let currentFrame = model.frame
         guard currentFrame != previousFrame else { return }
         guard previousClip != model.activeClipName else { return }
@@ -542,28 +680,32 @@ final class PetController: NSObject {
         contentView?.needsDisplay = true
     }
 
-    func handleClick(at point: NSPoint, clickCount: Int) {
+    func handleClick(at point: NSPoint, clickCount: Int, presentationTime: CFTimeInterval = CACurrentMediaTime()) {
         if clickCount >= 2 {
-            playInteraction("head_pat", message: "好啦好啦，知道你喜欢我~")
+            playInteraction("head_pat", message: "好啦好啦，知道你喜欢我~", at: presentationTime)
             return
         }
         let rect = petRect()
         let relativeX = max(0, point.x - rect.minX)
         let relativeY = max(0, point.y - rect.minY)
         if relativeY < rect.height * 0.45 {
-            playInteraction("head_pat", message: "摸摸也不能让我少干活哦~")
+            playInteraction("head_pat", message: "摸摸也不能让我少干活哦~", at: presentationTime)
         } else if relativeX > rect.width * 0.72 {
-            playInteraction("tail", message: "尾巴不是进度条啦！")
+            playInteraction("tail", message: customSkinImage == nil ? "尾巴不是进度条啦！" : "这样碰我，会分心的哦~", at: presentationTime)
         } else {
-            playInteraction("poke", message: "戳我干嘛，任务还在跑呢")
+            playInteraction("poke", message: "戳我干嘛，任务还在跑呢", at: presentationTime)
         }
         contentView?.needsDisplay = true
     }
 
-    private func playInteraction(_ clipName: String, message: String) {
+    private func playInteraction(_ clipName: String, message: String, at presentationTime: CFTimeInterval = CACurrentMediaTime()) {
         let previousFrame = model.frame
         let previousClip = model.activeClipName
         guard reducedMotion || model.playInteraction(clipName, nowMs: Self.nowMs()) else { return }
+        if customSkinImage != nil {
+            customInteractionAt = presentationTime
+            customTouchSpring.impulse(velocity: 9, at: customInteractionAt)
+        }
         syncFrameTransition(previousFrame: previousFrame, previousClip: previousClip)
         showOverlay(message, statusDetail, statusState, 1800)
         scheduleMicro()
@@ -572,7 +714,7 @@ final class PetController: NSObject {
 
     func showMenu(with event: NSEvent) {
         guard let contentView = contentView else { return }
-        let menu = NSMenu(title: "DSH 大肥鱼")
+        let menu = NSMenu(title: customSkinImage == nil ? "DSH 大肥鱼" : "DSH \(customSkinName)")
 
         let sizeMenu = NSMenu(title: "大小")
         for (label, value) in [("迷你", 0.6), ("小", 0.8), ("标准", 1.0), ("大", 1.25)] {
@@ -912,8 +1054,12 @@ final class PetController: NSObject {
 
     // MARK: - Drawing
 
-    func drawPet(in view: NSView) {
+    func drawPet(in view: NSView, at presentationTime: CFTimeInterval = CACurrentMediaTime()) {
         guard let image = frameImage(for: model.frame) else { return }
+        if customSkinImage != nil {
+            drawCustomSkin(image, at: presentationTime)
+            return
+        }
         var fadeAlpha: CGFloat = 1
         var fadeImage: NSImage?
         if let fromFrame = fadeFromFrame, let fromImage = frameImage(for: fromFrame) {
@@ -963,6 +1109,159 @@ final class PetController: NSObject {
         draw(image, alpha: fadeAlpha)
     }
 
+    private func customSkinPose(idle: NSImage, now: CFTimeInterval) -> (key: String, image: NSImage) {
+        if dragging {
+            return ("dragging", customDraggingImage ?? idle)
+        }
+        if customInteractionAt > 0, now - customInteractionAt < 1.5 {
+            return ("interaction", customInteractionImage ?? idle)
+        }
+        let state = overlayState ?? displayState
+        return (state, customStateImages[state] ?? idle)
+    }
+
+    private func makeCustomBlinkMask() -> CIImage? {
+        if let cached = customBlinkMask { return cached }
+        let width = Int(maxFrameWidth * 2), height = Int(maxFrameHeight * 2)
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                        colors: [CGColor(gray: 1, alpha: 1), CGColor(gray: 1, alpha: 0)] as CFArray,
+                                        locations: [0.65, 1]) else { return nil }
+        // Feather only the two eye areas. All hair, dress and silhouette pixels
+        // remain from the idle pose even if the generated blink varies there.
+        for (x, y) in [(0.442, 0.487), (0.550, 0.507)] {
+            context.saveGState()
+            context.translateBy(x: CGFloat(width) * x, y: CGFloat(height) * y)
+            context.scaleBy(x: CGFloat(width) * 0.050, y: CGFloat(height) * 0.041)
+            context.drawRadialGradient(gradient, startCenter: .zero, startRadius: 0,
+                                       endCenter: .zero, endRadius: 1, options: [])
+            context.restoreGState()
+        }
+        guard let image = context.makeImage() else { return nil }
+        let mask = CIImage(cgImage: image)
+        customBlinkMask = mask
+        return mask
+    }
+
+    private func customSkinRaster(idle: NSImage, weights: [String: Double], elapsed: Double,
+                                  drag: CGFloat, touch: CGFloat, motion: Bool) -> CGImage? {
+        var combined: CIImage?
+        var total: Double = 0
+        for (poseKey, weight) in weights.sorted(by: { $0.key < $1.key }) where weight > 0.000001 {
+            let image: NSImage
+            switch poseKey {
+            case "dragging": image = customDraggingImage ?? idle
+            case "interaction": image = customInteractionImage ?? idle
+            default: image = customStateImages[poseKey] ?? idle
+            }
+            guard let texture = customTextures[ObjectIdentifier(image)] else { continue }
+            if let accumulated = combined {
+                combined = accumulated.applyingFilter("CIDissolveTransition", parameters: [
+                    kCIInputTargetImageKey: texture,
+                    kCIInputTimeKey: weight / (total + weight),
+                ])
+            } else { combined = texture }
+            total += weight
+        }
+        guard var image = combined else { return nil }
+        let cycle = elapsed.truncatingRemainder(dividingBy: 4.8)
+        let blink: Double
+        if cycle >= 3.1 && cycle < 3.21 { blink = (cycle - 3.1) / 0.11 }
+        else if cycle >= 3.21 && cycle < 3.27 { blink = 1 }
+        else if cycle >= 3.27 && cycle < 3.43 { blink = 1 - (cycle - 3.27) / 0.16 }
+        else { blink = 0 }
+        if motion, blink > 0, let closed = customBlinkImage,
+           let blinkTexture = customTextures[ObjectIdentifier(closed)],
+           let mask = makeCustomBlinkMask() {
+            let openEyeWeight = ["IDLE", "THINKING", "WORKING", "WAITING", "ERROR", "DISCONNECTED"]
+                .reduce(0.0) { $0 + (weights[$1] ?? 0) }
+            let amount = blink * openEyeWeight
+            if amount > 0 {
+                let fadedMask = mask.applyingFilter("CIColorMatrix", parameters: [
+                    "inputAVector": CIVector(x: 0, y: 0, z: 0, w: amount),
+                ])
+                image = blinkTexture.applyingFilter("CIBlendWithAlphaMask", parameters: [
+                    kCIInputBackgroundImageKey: image,
+                    kCIInputMaskImageKey: fadedMask,
+                ])
+            }
+        }
+        if motion, let warp = Self.customWarp,
+           let warped = warp.apply(extent: image.extent,
+                                   roiCallback: { _, rect in rect.insetBy(dx: -28, dy: -10) },
+                                   image: image,
+                                   arguments: [elapsed, image.extent.width, image.extent.height, drag, touch,
+                                               (weights["SUCCESS"] ?? 0) + (weights["interaction"] ?? 0),
+                                               weights["WORKING"] ?? 0]) {
+            image = warped
+        }
+        // Rasterize at the current window's retina density instead of always
+        // processing the full source image at its generated resolution.
+        let resolution = min(1.4, max(0.55, scale))
+        image = image.transformed(by: CGAffineTransform(scaleX: resolution, y: resolution))
+        if let rendered = customRenderContext.createCGImage(image, from: image.extent) { return rendered }
+        if !customRenderFallbackLogged {
+            customRenderFallbackLogged = true
+            FileHandle.standardError.write(Data("Companion GPU rendering unavailable; trying software Core Image. If unavailable, normalized artwork stays visible without internal deformation.\n".utf8))
+        }
+        if let rendered = customSoftwareContext.createCGImage(image, from: image.extent) { return rendered }
+        return idle.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    }
+
+    private func drawCustomSkin(_ idle: NSImage, at now: CFTimeInterval) {
+        let rect = petRect()
+        let motion = !reducedMotion && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let requested = customSkinPose(idle: idle, now: now)
+        let key = requested.image === idle ? "IDLE" : requested.key
+        let immediate = ["dragging", "interaction", "ERROR", "WAITING", "SUCCESS"].contains(key)
+            || customPoseMixer.targetPose == "dragging"
+        let weights: [String: Double]
+        if motion {
+            weights = customPoseMixer.update(requested: key, at: now, immediate: immediate)
+        } else {
+            customPoseMixer.reset(to: key, at: now)
+            weights = [key: 1]
+        }
+        customDragSpring.retarget(motion && dragging ? 1 : 0, at: now)
+        customTouchSpring.advance(to: now)
+        let drag = motion ? CGFloat(customDragSpring.position) : 0
+        let touch = motion ? CGFloat(customTouchSpring.position) : 0
+        let elapsed = max(0, now - customSkinShownAt)
+        let progress = motion ? min(1, elapsed / 0.7) : 1
+        let entry = 1 - pow(1 - progress, 3)
+        // A single phase runs throughout all poses and transitions.
+        let phase = elapsed * 1.7
+        let entryScale = CGFloat(0.96 + entry * 0.04)
+        guard let raster = customSkinRaster(idle: idle, weights: weights, elapsed: elapsed,
+                                           drag: drag, touch: touch, motion: motion) else { return }
+
+        NSGraphicsContext.saveGraphicsState()
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            NSGraphicsContext.restoreGraphicsState()
+            return
+        }
+        context.saveGState()
+        context.translateBy(x: rect.midX,
+                            y: rect.midY + CGFloat(1 - entry) * 10 * scale - drag * 5 * scale - touch * 2 * scale)
+        context.scaleBy(x: scale * entryScale, y: -scale * entryScale)
+        // Rotate and breathe around the shared foot anchor, not the canvas
+        // center. The exact damped spring settles smoothly after release.
+        let footY = -maxFrameHeight * 0.46
+        context.translateBy(x: 0, y: footY)
+        context.rotate(by: drag * (0.012 + CGFloat(sin(phase * 1.8)) * 0.012))
+        context.scaleBy(x: 1 - touch * 0.007, y: 1 + touch * 0.01)
+        context.translateBy(x: 0, y: -footY)
+        context.setAlpha(CGFloat(entry))
+
+        context.interpolationQuality = .high
+        context.draw(raster, in: CGRect(x: -maxFrameWidth / 2, y: -maxFrameHeight / 2,
+                                        width: maxFrameWidth, height: maxFrameHeight))
+        context.restoreGState()
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
     func drawCard(in view: NSView) {
         guard bubbleVisible() else { return }
         let rect = bubbleRect()
@@ -971,7 +1270,7 @@ final class PetController: NSObject {
         } else if let card = currentCard() {
             drawStatusCard(rect: rect, card: card)
         } else if !balanceSummary.isEmpty {
-            drawStatusCard(rect: rect, card: ("大肥鱼陪你待命", "DSH · 等待下一次任务", "IDLE"))
+            drawStatusCard(rect: rect, card: ("\(customSkinImage == nil ? "大肥鱼" : customSkinName)陪你待命", "DSH · 等待下一次任务", "IDLE"))
         }
         if !balanceSummary.isEmpty {
             drawText(balanceSummary,

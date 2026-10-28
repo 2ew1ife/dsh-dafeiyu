@@ -10,7 +10,13 @@
 
 </div>
 
-> **Fork note:** This repository is forked from [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu). The original author and contributors retain credit for the project, its feature design, and stable releases; this branch only carries small macOS status-card visual and local-build refinements.
+> **Fork note:** This repository is forked from [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu). The original author and contributors retain credit for the project, feature design, and stable releases. This branch adds macOS appearance refinements, optional local skins, and local-build compatibility. The included startup theme is adapted from [KylinQ01/dsh-startup-animation](https://github.com/KylinQ01/dsh-startup-animation), with its original attribution and MIT license preserved.
+
+### Optional Kurumi appearance
+
+The optional skin includes idle, thinking, reading, greeting, and drag-reaction poses with pose blending, continuous subtle sway, and release settling. It is a lightweight desktop animation; the original BigFish animation implementation remains intact.
+
+See [skin assets and setup](extras/kurumi-skin/README.md) and [wallpaper and startup theme](extras/kurumi-startup/README.md). These are source-branch additions and are not included in the upstream npm stable installation commands below. The character pictures are generated fan art, not official character assets.
 
 BigFish starts and stops with its DSH Host. A transparent, frameless native window keeps the Agent's task status visible while you work in other apps.
 

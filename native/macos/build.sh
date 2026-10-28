@@ -21,6 +21,7 @@ PACKAGE_VERSION="$(node -p "require('$ROOT/package.json').version")"
 
 SOURCES=(
   "$DIR/Sources/AnimationModel.swift" \
+  "$DIR/Sources/CustomSkinMotion.swift" \
   "$DIR/Sources/LayoutStore.swift" \
   "$DIR/Sources/PetGeometry.swift" \
   "$DIR/Sources/Permissions.swift" \
@@ -30,6 +31,7 @@ SOURCES=(
 )
 FRAMEWORKS=(
   -framework AppKit \
+  -framework CoreImage \
   -framework UserNotifications \
   -framework ApplicationServices \
   -framework QuartzCore \
