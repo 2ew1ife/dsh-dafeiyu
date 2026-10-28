@@ -10,6 +10,8 @@
 
 </div>
 
+> **Fork 说明：** 本仓库 fork 自 [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu)。项目主体、功能设计与后续稳定版均归原作者及贡献者；本分支仅维护 macOS 状态卡视觉与本机构建细节的小幅优化。
+
 大肥鱼由 DSH 插件启动，随 DSH 一起退出。透明、无边框、始终置顶的原生窗口，让你在编辑器、浏览器或其他应用中也能看到 Agent 的工作状态。
 
 > **当前稳定版：0.1.21。** 新增 macOS 跨显示器拖动修复；右键菜单里的大小、气泡大小和减少动态在 DSH 设置写入失败时也会保留，并把失败原因写进 Helper 日志。继续包含 0.1.20 的透明区域点击穿透与 0.1.19 的 Helper 冷启动诊断。安装时填写 `dsh-dafeiyu@0.1.21`，离线安装请从[最新版下载页](https://github.com/QCYTSN/dsh-dafeiyu/releases/latest)选择 **`dsh-dafeiyu-0.1.21.tgz`**；Windows、Linux 与 macOS 共用这一个包。GitHub 自动生成的 **Source code (zip / tar.gz)** 是源码，不是安装包。
