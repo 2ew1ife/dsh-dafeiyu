@@ -6,8 +6,9 @@
 <key>CFBundleName</key><string>DSH 启动器</string>
 <key>CFBundleDisplayName</key><string>DSH 启动器</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>1.0.0</string>
-<key>CFBundleShortVersionString</key><string>1.0.0</string>
+<key>CFBundleIconFile</key><string>AppIcon.icns</string>
+<key>CFBundleVersion</key><string>1.0.1</string>
+<key>CFBundleShortVersionString</key><string>1.0.1</string>
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSMultipleInstancesProhibited</key><true/>
